@@ -19,11 +19,11 @@ jobs:
 
     steps:
       - name: Checkout ref to release
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event.inputs.ref || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -34,63 +34,70 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate release notes
+      - name: Generate changelog
+        id: git_cliff
         uses: orhun/git-cliff-action@5948f44d10840fe2942302442a825512938ca72e # v4.4.0
         with:
           version: v2.12.0
           config: cliff.toml
-          args: --unreleased --strip header
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          args: --bump --unreleased --strip header
         env:
-          OUTPUT: release-notes.md
+          OUTPUT: changelog.md
           GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Fail if there is nothing to release
         run: |
-          if [ ! -s release-notes.md ]; then
+          if [ ! -s changelog.md ]; then
             echo "No new commits since previous tag. Nothing to release."
             exit 1
           fi
 
-      - name: Compute next version
-        id: version
+      - name: Validate generated version
+        env:
+          VERSION: ${{ steps.git_cliff.outputs.version }}
         run: |
-          version=$(./bin/git-cliff --config cliff.toml --bumped-version)
-          if [ -z "$version" ]; then
-            echo "git-cliff produced empty version"
+          if ! echo "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Generated version '${VERSION}' does not match vMAJOR.MINOR.PATCH"
             exit 1
           fi
-          echo "content=${version}" >> "$GITHUB_OUTPUT"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPO: ${{ github.repository }}
+          echo "Release version: ${VERSION}"
 
-      - name: Create release branch
+      - name: Fail if tag already exists
+        env:
+          VERSION: ${{ steps.git_cliff.outputs.version }}
+        run: |
+          if git tag --list "${VERSION}" | grep -q .; then
+            echo "::error::Tag ${VERSION} already exists. Aborting."
+            exit 1
+          fi
+
+      - name: Create release branch and merge main
         id: branch
         run: |
           ts=$(date -u +"%Y%m%d-%H%M%S")
           branch="release/${ts}"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
+          git checkout -b "${branch}"
+          git fetch origin main
+          git merge origin/main --no-edit
           echo "name=${branch}" >> "$GITHUB_OUTPUT"
-
-      - name: Merge main into release branch
-        run: git fetch origin main && git merge origin/main --no-edit
 
       - name: Prepend CHANGELOG
         uses: orhun/git-cliff-action@5948f44d10840fe2942302442a825512938ca72e # v4.4.0
         with:
           version: v2.12.0
           config: cliff.toml
-          args: --unreleased --prepend CHANGELOG.md --tag ${{ steps.version.outputs.content }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          args: --unreleased --prepend CHANGELOG.md --tag ${{ steps.git_cliff.outputs.version }}
         env:
           GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Bump package version
         env:
-          VERSION: ${{ steps.version.outputs.content }}
+          VERSION: ${{ steps.git_cliff.outputs.version }}
         run: |
           npm version "${VERSION#v}" --no-git-tag-version --allow-same-version
           git add CHANGELOG.md package.json package-lock.json
@@ -103,15 +110,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_BRANCH: ${{ steps.branch.outputs.name }}
-          NEW_TAG: ${{ steps.version.outputs.content }}
+          NEW_TAG: ${{ steps.git_cliff.outputs.version }}
         run: |
           new_pr_url=$(gh pr create \
             --base main \
             --head "${RELEASE_BRANCH}" \
             --title "chore(release): ${NEW_TAG}" \
-            --body-file release-notes.md)
+            --body-file changelog.md)
 
-          new_pr_number=$(echo "$new_pr_url" | grep -o '[0-9]*$')
+          new_pr_number="${new_pr_url##*/}"
           echo "Created release PR #${new_pr_number}"
 
           old_prs=$(gh pr list \
