@@ -121,22 +121,6 @@ replace_command = "sed 's/^[^:!(/]*/\\L&/'"
 pattern = '\\((\\w+\\s)?#([0-9]+)\\)'
 replace = ""
 
-[[git.commit_parsers]]
-author = "dependabot\\[bot\\]"
-skip = true
-
-[[git.commit_parsers]]
-author = "github-actions\\[bot\\]"
-skip = true
-
-[[git.commit_parsers]]
-message = "^Merge pull request"
-skip = true
-
-[[git.commit_parsers]]
-message = "^Merge branch"
-skip = true
-
 [bump]
 features_always_bump_minor = true
 breaking_always_bump_major = true
