@@ -1,0 +1,125 @@
+name: Prepare release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ref to release (default: dev)"
+        required: false
+        default: dev
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    if: github.actor == 'jozzi05'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout ref to release
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up git-cliff
+        uses: kenji-miyake/setup-git-cliff@v2
+        with:
+          version: "2.12.0"
+
+      - name: Compute next version
+        id: version
+        run: |
+          version=$(git-cliff --config cliff.toml --bumped-version)
+          if [ -z "$version" ]; then
+            echo "git-cliff produced empty version"
+            exit 1
+          fi
+          echo "content=${version}" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Generate release notes
+        run: |
+          git-cliff --config cliff.toml \
+            --unreleased --strip header \
+            --output release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Fail if there is nothing to release
+        run: |
+          if [ ! -s release-notes.md ]; then
+            echo "No new commits since previous tag. Nothing to release."
+            exit 1
+          fi
+
+      - name: Create release branch
+        id: branch
+        run: |
+          ts=$(date -u +"%Y%m%d-%H%M%S")
+          branch="release/${ts}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          echo "name=${branch}" >> "$GITHUB_OUTPUT"
+
+      - name: Merge main into release branch
+        run: git fetch origin main && git merge origin/main --no-edit
+
+      - name: Update CHANGELOG and package version
+        env:
+          VERSION: ${{ steps.version.outputs.content }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          git cliff --config cliff.toml \
+            --unreleased --prepend CHANGELOG.md \
+            --tag "${VERSION}"
+          npm version "${VERSION#v}" --no-git-tag-version --allow-same-version
+          git add CHANGELOG.md package.json package-lock.json
+          git commit -m "chore(release): ${VERSION}"
+
+      - name: Push release branch
+        run: git push -u origin HEAD
+
+      - name: Create release PR and close previous ones
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCH: ${{ steps.branch.outputs.name }}
+          NEW_TAG: ${{ steps.version.outputs.content }}
+        run: |
+          new_pr_url=$(gh pr create \
+            --base main \
+            --head "${RELEASE_BRANCH}" \
+            --title "chore(release): ${NEW_TAG}" \
+            --body-file release-notes.md)
+
+          new_pr_number=$(echo "$new_pr_url" | grep -o '[0-9]*$')
+          echo "Created release PR #${new_pr_number}"
+
+          old_prs=$(gh pr list \
+            --base main \
+            --state open \
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("release/")) | select(.number != '"${new_pr_number}"') | .number')
+
+          for pr in $old_prs; do
+            echo "Closing previous release PR #${pr} in favour of #${new_pr_number}"
+            gh pr comment "$pr" --body "Closing in favour of #${new_pr_number}."
+            gh pr close "$pr" --delete-branch
+          done
