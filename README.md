@@ -137,6 +137,33 @@ before `mount()` and before any call inspection):
 A bare `mock(specifier, name)` with no implementation is a spy: it records
 calls and passes through to the original.
 
+### Mocking outside the test body
+
+The vi.mock/jest.mock analog is the `mocks` option, usable at file or
+describe level (applied before every test in scope, each on its fresh page):
+
+```ts
+import { defineMocks, expect, test } from './fixtures'
+
+test.use({
+  mocks: defineMocks((mock) => {
+    mock('./api', 'getUser').mockResolvedValue({ id: '1', name: 'Alice' })
+  }),
+})
+```
+
+A nested `test.use({ mocks: ... })` overrides the outer one for its scope;
+`test.use({ mocks: undefined })` opts out. Test bodies can still call
+`mock()` on top — the same specifier + export resolves to the same underlying
+mock, and later commands win. Plain hooks also work, since Playwright hooks
+receive fixtures:
+
+```ts
+test.beforeEach(async ({ mock }) => {
+  mock('./dependency', 'foo').mockReturnValue(777)
+})
+```
+
 Matchers (async — call data lives in the browser):
 
 ```ts

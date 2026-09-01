@@ -235,7 +235,31 @@ export type MockFunction = ((specifier: string, exportName: string) => MockHandl
   ): Record<string, MockHandle>
 }
 
-export type MockFixtures = { mock: MockFunction }
+/**
+ * File/describe-level mock setup, the vi.mock/jest.mock analog:
+ *
+ *   test.use({
+ *     mocks: [
+ *       (mock) => {
+ *         mock('./api', 'getUser').mockResolvedValue(user)
+ *       },
+ *     ],
+ *   })
+ *
+ * Runs before every test in scope (each test has its own page, so "declare
+ * once" necessarily means "apply per test"). Tests can still call `mock()`
+ * on top; later commands win for the same export. The value is an array
+ * because Playwright interprets bare function option values as fixture
+ * definitions.
+ */
+export type MocksSetup = (mock: MockFunction) => void | Promise<void>
+
+/** Identity helper that gives `test.use({ mocks })` full type inference. */
+export function defineMocks(...setups: MocksSetup[]): MocksSetup[] {
+  return setups
+}
+
+export type MockFixtures = { mock: MockFunction; mocks: MocksSetup[] | undefined }
 
 const controllers = new WeakMap<MockFunction, MockController>()
 
@@ -251,9 +275,14 @@ export function withMocks<TArgs extends object, WArgs extends object>(
   // runtime by Playwright; typing it against the generic base is not worth
   // the ceremony.
   return base.extend<MockFixtures>({
-    mock: async ({ page }: { page: Page }, use: (mock: MockFunction) => Promise<void>) => {
+    mocks: [undefined, { option: true }],
+    mock: async (
+      { page, mocks }: { page: Page; mocks: MocksSetup[] | undefined },
+      use: (mock: MockFunction) => Promise<void>,
+    ) => {
       const controller = new MockController(page)
       controllers.set(controller.mock, controller)
+      for (const setup of mocks ?? []) await setup(controller.mock)
       await use(controller.mock)
       await controller.dispose()
     },
