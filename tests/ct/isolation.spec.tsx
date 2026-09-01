@@ -7,7 +7,7 @@
 import { Component } from '../../src/demo/Component'
 import { expect, test } from './fixtures'
 
-for (let i = 0; i < 10; i++) {
+for (let i = 0; i < 25; i++) {
   test(`parallel mock ${i} sees its own value`, async ({ mount, mock }) => {
     const foo = mock('./dependency', 'foo')
     foo.mockReturnValue(1000 + i)

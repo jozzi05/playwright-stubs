@@ -1,5 +1,16 @@
 # Deep analysis of the milestone-1 implementation
 
+> **Status note.** This analysis reviewed the original import-site
+> instrumentation prototype and drove a full redesign. The current
+> implementation replaced consumer transformation with universal module
+> proxying via `resolveId`/`load` (see the README). That redesign resolved
+> the P0 items below (silent no-match/index-module failures, ambiguity
+> detection, cross-module identity, live bindings, circular TDZ, constructor
+> safety, Date-safe equality with asymmetric matchers) and shipped the P2
+> scope (namespace imports, defaults incl. object methods, re-export facades,
+> `export *`, dynamic imports, npm ESM/CJS packages). The document is kept as
+> the rationale for that decision.
+
 This document audits the shipped prototype against the design brief: what each
 component does, why it was built that way, where it is strong, where it is
 semantically wrong or fragile, and what to improve in which order. It is

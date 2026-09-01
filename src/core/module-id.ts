@@ -1,35 +1,59 @@
 /**
- * Module identity matching, shared between the browser runtime and tests.
+ * Module identity resolution.
  *
- * The registry must answer: does the specifier the test passed to
- * `mock('./dependency', 'foo')` refer to the module behind a given import
- * site? Import sites carry both the raw specifier written in the consumer and
- * the Vite-resolved module id (relative to the project root, query stripped).
+ * `mock('./api', ...)` must find the registered module it refers to. Each
+ * registered module carries its canonical id (root-relative resolved path),
+ * the raw specifiers observed at build time, and — for node_modules — the
+ * bare package name. Matching rules, in order of strength:
  *
- * Matching rules, in order:
- *  1. Exact match on the raw specifier (covers bare package names and tests
- *     that use the same relative path as the consumer).
- *  2. Extension-insensitive suffix match against the resolved module id, so
- *     `mock('./dependency', ...)` matches `src/demo/dependency.ts` and
- *     `mock('src/demo/dependency', ...)` does too.
+ *  1. exact match on canonical id or an observed raw specifier;
+ *  2. exact match on the derived package name (`mock('@company/api')`);
+ *  3. extension-insensitive, `/index`-insensitive suffix match on the
+ *     canonical id (`mock('./api')` matches `src/demo/api.ts` and
+ *     `src/demo/api/index.ts`).
+ *
+ * Zero matches leaves the mock pending (the module may not have loaded yet);
+ * more than one distinct match is an explicit ambiguity error.
  */
+
+import type { ModuleRegistration } from './protocol'
 
 const QUERY_RE = /[?#].*$/
 const EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/
 
 export function normalizeModuleId(id: string): string {
-  return id.replace(QUERY_RE, '').replace(EXT_RE, '')
+  let normalized = id.replace(QUERY_RE, '').replace(EXT_RE, '')
+  if (normalized.endsWith('/index')) normalized = normalized.slice(0, -'/index'.length)
+  return normalized
 }
 
-export function moduleMatches(
-  mockSpecifier: string,
-  site: { specifier: string; moduleId: string },
-): boolean {
-  if (mockSpecifier === site.specifier) return true
+/** Strip leading `./` and `../` segments so relative specs suffix-match. */
+export function normalizeSpecifier(spec: string): string {
+  return normalizeModuleId(spec).replace(/^(\.\.?\/)+/, '')
+}
 
-  const wanted = normalizeModuleId(mockSpecifier).replace(/^\.\//, '')
-  if (wanted === '') return false
-  const resolved = normalizeModuleId(site.moduleId)
+export function derivePackageName(id: string): string | undefined {
+  const match = id.match(/node_modules\/((?:@[^/]+\/)?[^/?]+)(?!.*node_modules)/)
+  return match ? match[1] : undefined
+}
 
-  return resolved === wanted || resolved.endsWith('/' + wanted)
+export function findModules(
+  spec: string,
+  modules: Iterable<ModuleRegistration>,
+): ModuleRegistration[] {
+  const wanted = normalizeSpecifier(spec)
+  const found: ModuleRegistration[] = []
+
+  for (const module of modules) {
+    const matches =
+      module.id === spec ||
+      module.specifiers.includes(spec) ||
+      module.packageName === spec ||
+      (wanted !== '' &&
+        (normalizeModuleId(module.id) === wanted ||
+          normalizeModuleId(module.id).endsWith('/' + wanted)))
+    if (matches) found.push(module)
+  }
+
+  return found
 }

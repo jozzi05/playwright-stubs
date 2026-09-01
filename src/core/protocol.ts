@@ -1,9 +1,17 @@
 /**
  * Shared types for the Node <-> browser mock protocol.
  *
- * The Node side only ever sends plain serializable data ("descriptors") to the
- * browser. The browser-side runtime interprets descriptors at call time. This
+ * The Node side only ever sends plain serializable data ("descriptors" and
+ * "commands") to the browser. The browser-side runtime interprets them. This
  * keeps the bridge boring: no RPC per invocation, no Node callbacks.
+ *
+ * The browser store has two layers:
+ *  - a dumb queue (`__PW_STUBS__.queue`) that `page.evaluate` can always
+ *    write to, even before any application module has loaded;
+ *  - a smart API (`__PW_STUBS__.api`) installed by the runtime module once
+ *    the first proxy module evaluates. It drains the queue, resolves
+ *    specifiers against registered modules, validates export names and owns
+ *    the dispatch state.
  */
 
 export type SerializedError = {
@@ -19,34 +27,7 @@ export type ImplDescriptor =
   /** Function source, evaluated once in the browser. Must be closure-free. */
   | { type: 'implementation'; fnSource: string }
 
-/**
- * One mocked export. Created lazily from the Node side; consulted by every
- * instrumented wrapper on every call.
- */
-export type MockEntry = {
-  /** Module specifier exactly as the test passed it to `mock()`. */
-  specifier: string
-  exportName: string
-  impl: ImplDescriptor | null
-  onceQueue: ImplDescriptor[]
-  calls: unknown[][]
-}
-
-export type StubStore = {
-  entries: MockEntry[]
-}
-
-/**
- * Identity of an import site, embedded into transformed source by the Vite
- * plugin. `specifier` is the raw string from the import statement; `moduleId`
- * is the Vite-resolved id relative to the project root (query stripped).
- */
-export type ImportMeta_ = {
-  specifier: string
-  moduleId: string
-}
-
-/** Commands the Node-side mock handle sends to the browser registry. */
+/** Commands a Node-side mock handle sends to the browser registry. */
 export type MockCommand =
   | { op: 'ensure' }
   | { op: 'set'; impl: ImplDescriptor }
@@ -56,9 +37,50 @@ export type MockCommand =
   | { op: 'restore' }
 
 export type AddressedCommand = {
+  /** Module specifier exactly as the test passed it to `mock()`. */
   specifier: string
+  /** Export name; `default.method` addresses a default-exported object. */
   exportName: string
   command: MockCommand
+}
+
+/** Emitted into every generated proxy module by the Vite plugin. */
+export type ModuleRegistration = {
+  /** Canonical id: resolved path relative to the Vite root. */
+  id: string
+  /** Raw import specifiers observed for this module at build time. */
+  specifiers: string[]
+  /** Bare package name when the module lives in node_modules. */
+  packageName?: string
+  /** Export names that are actually wrapped (i.e. mockable). */
+  exportNames: string[]
+}
+
+/** Mutable dispatch state for one mocked export. */
+export type EntryState = {
+  impl: ImplDescriptor | null
+  onceQueue: ImplDescriptor[]
+  calls: unknown[][]
+  restored: boolean
+}
+
+export type DisposeReport = {
+  /** Human-readable descriptions of mocks that never attached to a module. */
+  pending: string[]
+  errors: string[]
+}
+
+export type RegistryApi = {
+  apply(): void
+  getCalls(specifier: string, exportName: string): unknown[][]
+  reset(): DisposeReport
+}
+
+export type StubStore = {
+  queue: AddressedCommand[]
+  /** Validation errors deferred from queue drains during module evaluation. */
+  errors: string[]
+  api?: RegistryApi
 }
 
 export const STORE_KEY = '__PW_STUBS__'

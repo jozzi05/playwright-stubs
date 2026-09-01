@@ -12,14 +12,17 @@
   },
   "dependencies": {
     "acorn": "^8.0.0",
-    "magic-string": "^0.30.0"
+    "esbuild": "^0.28.2"
   },
   "devDependencies": {
     "@playwright/experimental-ct-react": "latest",
     "@playwright/test": "^1.62.1",
+    "@types/classnames": "^2.3.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "classnames": "^2.5.1",
+    "clsx": "^2.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.0.0",

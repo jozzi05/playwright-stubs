@@ -1,17 +1,18 @@
 /**
  * Node-side mock API and Playwright fixture.
  *
- * Ergonomics follow the brief: `mock()` and its configuration methods are
- * synchronous and chainable. Commands are queued in Node and flushed to the
- * browser registry as serialized data:
- *   - automatically before `mount()` (so mocks are live before the component
- *     module evaluates),
- *   - automatically before any call-inspection (matchers, `.calls()`),
- *   - explicitly via `await handle.sync()` for post-mount reconfiguration.
+ * `mock()` and its configuration methods are synchronous and chainable.
+ * Commands queue in Node and flush to the browser as serialized data:
+ *  - automatically before `mount()` (mocks are live before module evaluation),
+ *  - automatically before any call inspection (matchers, `.calls()`),
+ *  - explicitly via `await handle.sync()` for post-mount reconfiguration.
  *
- * No Node callback ever runs per invocation (brief §28).
- * `mockImplementation(fn)` ships `fn.toString()` to the browser; the function
- * must therefore be closure-free and is executed browser-side.
+ * Validation is loud: unknown exports and ambiguous specifiers reject the
+ * flushing call; mocks that never attach to a loaded module fail the test at
+ * teardown with an explanatory message.
+ *
+ * No Node callback ever runs per invocation. `mockImplementation(fn)` ships
+ * `fn.toString()` to the browser; it must be closure-free.
  */
 
 import type { Page, TestType } from '@playwright/test'
@@ -99,7 +100,7 @@ export class MockHandle {
     return this.enqueue({ op: 'reset' })
   }
 
-  /** Remove the registry entry entirely; calls go straight to the original. */
+  /** Stop mocking and recording; calls go straight to the original. */
   mockRestore(): this {
     return this.enqueue({ op: 'restore' })
   }
@@ -109,7 +110,7 @@ export class MockHandle {
     await this.controller.flush()
   }
 
-  /** Recorded call argument lists, fetched from the browser. */
+  /** Recorded call argument lists (sanitized snapshots taken at call time). */
   async calls(): Promise<unknown[][]> {
     return this.controller.fetchCalls(this.specifier, this.exportName)
   }
@@ -124,48 +125,44 @@ export class MockController {
     this.pending.push(command)
   }
 
-  mock = (specifier: string, exportName: string): MockHandle => {
+  private createHandle = (specifier: string, exportName: string): MockHandle => {
     return new MockHandle(this, specifier, exportName)
   }
+
+  mock: MockFunction = Object.assign(this.createHandle, {
+    /**
+     * Mock several exports of one module at once. Implementations run in the
+     * browser and must be closure-free functions.
+     */
+    module: (
+      specifier: string,
+      implementations: Record<string, (...args: never[]) => unknown>,
+    ): Record<string, MockHandle> => {
+      const handles: Record<string, MockHandle> = {}
+      for (const [exportName, fn] of Object.entries(implementations)) {
+        if (typeof fn !== 'function') {
+          throw new Error(
+            `playwright-stubs: mock.module("${specifier}") supports function ` +
+              `implementations only; "${exportName}" is ${typeof fn}. ` +
+              `Use mock("${specifier}", "${exportName}").mockReturnValue(...) for values.`,
+          )
+        }
+        handles[exportName] = this.createHandle(specifier, exportName).mockImplementation(fn)
+      }
+      return handles
+    },
+  })
 
   async flush(): Promise<void> {
     if (this.pending.length === 0) return
     const batch = this.pending
     this.pending = []
     await this.page.evaluate((commands: AddressedCommand[]) => {
-      const store = (globalThis.__PW_STUBS__ ??= { entries: [] })
-      for (const { specifier, exportName, command } of commands) {
-        const index = store.entries.findIndex(
-          (entry) => entry.specifier === specifier && entry.exportName === exportName,
-        )
-        if (command.op === 'restore') {
-          if (index !== -1) store.entries.splice(index, 1)
-          continue
-        }
-        let entry = index === -1 ? null : store.entries[index]
-        if (!entry) {
-          entry = { specifier, exportName, impl: null, onceQueue: [], calls: [] }
-          store.entries.push(entry)
-        }
-        switch (command.op) {
-          case 'set':
-            entry.impl = command.impl
-            break
-          case 'push-once':
-            entry.onceQueue.push(command.impl)
-            break
-          case 'clear':
-            entry.calls = []
-            break
-          case 'reset':
-            entry.impl = null
-            entry.onceQueue = []
-            entry.calls = []
-            break
-          case 'ensure':
-            break
-        }
-      }
+      const store = (globalThis.__PW_STUBS__ ??= { queue: [], errors: [] })
+      store.queue.push(...commands)
+      // Apply immediately when the runtime is live; otherwise the queue
+      // drains as soon as the first instrumented module evaluates.
+      if (store.api) store.api.apply()
     }, batch)
   }
 
@@ -173,43 +170,70 @@ export class MockController {
     await this.flush()
     return this.page.evaluate(
       ({ specifier, exportName }) => {
-        const store = globalThis.__PW_STUBS__
-        const entry = store?.entries.find(
-          (candidate) =>
-            candidate.specifier === specifier && candidate.exportName === exportName,
-        )
-        if (!entry) return []
-        // Round-trip through JSON so non-serializable arguments degrade
-        // gracefully instead of failing the evaluate call.
-        return entry.calls.map((args) =>
-          args.map((arg) => {
-            try {
-              return arg === undefined ? undefined : JSON.parse(JSON.stringify(arg))
-            } catch {
-              return '[unserializable]'
-            }
-          }),
-        )
+        const store = (globalThis.__PW_STUBS__ ??= { queue: [], errors: [] })
+        if (!store.api) {
+          throw new Error(
+            `playwright-stubs: no instrumented module has loaded in this page yet; ` +
+              `cannot read calls for mock(${JSON.stringify(specifier)}, ` +
+              `${JSON.stringify(exportName)}). Did the test mount a component?`,
+          )
+        }
+        store.api.apply()
+        return store.api.getCalls(specifier, exportName)
       },
       { specifier, exportName },
     )
   }
 
-  /** Test teardown: wipe the registry (critical when contexts are reused). */
+  /**
+   * Test teardown: wipe mock state (critical when contexts are reused) and
+   * surface deferred failures -- mocks that never attached to any loaded
+   * module, and validation errors nothing else reported.
+   */
   async dispose(): Promise<void> {
     this.pending = []
+    let report: { pending: string[]; errors: string[] } | null = null
     try {
-      await this.page.evaluate(() => {
+      report = await this.page.evaluate(() => {
         const store = globalThis.__PW_STUBS__
-        if (store) store.entries.length = 0
+        if (!store) return { pending: [], errors: [] }
+        if (store.api) return store.api.reset()
+        // Runtime never loaded: anything queued cannot have attached.
+        const pending = [
+          ...new Set(
+            store.queue.map(
+              (cmd) => `mock(${JSON.stringify(cmd.specifier)}, ${JSON.stringify(cmd.exportName)})`,
+            ),
+          ),
+        ]
+        store.queue.length = 0
+        return { pending, errors: store.errors.splice(0) }
       })
     } catch {
       // Page already closed; nothing can leak from a closed page.
+      return
+    }
+
+    const problems = [...report.errors]
+    if (report.pending.length > 0) {
+      problems.push(
+        `the following mocks never attached to a loaded module: ` +
+          `${report.pending.join(', ')}. Either the mounted component never imported ` +
+          `the module, or the specifier matches no instrumented module.`,
+      )
+    }
+    if (problems.length > 0) {
+      throw new Error(`playwright-stubs:\n${problems.join('\n')}`)
     }
   }
 }
 
-export type MockFunction = (specifier: string, exportName: string) => MockHandle
+export type MockFunction = ((specifier: string, exportName: string) => MockHandle) & {
+  module(
+    specifier: string,
+    implementations: Record<string, (...args: never[]) => unknown>,
+  ): Record<string, MockHandle>
+}
 
 export type MockFixtures = { mock: MockFunction }
 
@@ -225,7 +249,7 @@ export function withMocks<TArgs extends object, WArgs extends object>(
 ): TestType<TArgs & MockFixtures, WArgs> {
   // The fixture shape (page dependency, mount override) is validated at
   // runtime by Playwright; typing it against the generic base is not worth
-  // the ceremony for a prototype.
+  // the ceremony.
   return base.extend<MockFixtures>({
     mock: async ({ page }: { page: Page }, use: (mock: MockFunction) => Promise<void>) => {
       const controller = new MockController(page)
