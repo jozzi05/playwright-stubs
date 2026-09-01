@@ -139,30 +139,32 @@ calls and passes through to the original.
 
 ### Mocking outside the test body
 
-The vi.mock/jest.mock analog is the `mocks` option, usable at file or
-describe level (applied before every test in scope, each on its fresh page):
+The vi.mock/jest.mock analog is `test.mock()` at the top of the file:
 
 ```ts
-import { defineMocks, expect, test } from './fixtures'
+import { expect, test } from './fixtures'
 
-test.use({
-  mocks: defineMocks((mock) => {
-    mock('./api', 'getUser').mockResolvedValue({ id: '1', name: 'Alice' })
-  }),
-})
+test.mock('./api', 'getUser').mockResolvedValue({ id: '1', name: 'Alice' })
+
+test('renders', async ({ mount }) => { ... })  // mock already active
 ```
 
-A nested `test.use({ mocks: ... })` overrides the outer one for its scope;
-`test.use({ mocks: undefined })` opts out. Test bodies can still call
-`mock()` on top — the same specifier + export resolves to the same underlying
-mock, and later commands win. Plain hooks also work, since Playwright hooks
-receive fixtures:
+Declarations are recorded per file and auto-applied to every test in it (each
+on its fresh page). Test bodies can still call `mock()` on top — same target
+shares state, later commands win. Unused file-level mocks do not fail tests
+that never load the module.
+
+`test.mock.module(specifier, { name: fn, ... })` mocks several exports at
+once. Plain hooks also work:
 
 ```ts
 test.beforeEach(async ({ mock }) => {
   mock('./dependency', 'foo').mockReturnValue(777)
 })
 ```
+
+For describe-scoped overrides, `test.use({ mocks: defineMocks((mock) => ...) })`
+still works; `test.use({ mocks: undefined })` opts out.
 
 Matchers (async — call data lives in the browser):
 

@@ -35,6 +35,8 @@ type HandleRecord = {
   state: EntryState
   moduleId?: string
   errored?: boolean
+  /** Ambient declaration (file-level); not reported when never attached. */
+  soft?: boolean
 }
 
 function getStore(): StubStore {
@@ -196,13 +198,16 @@ class Registry {
     const key = handleKey(specifier, exportName)
     let handle = this.handles.get(key)
     if (!handle) {
-      handle = { specifier, exportName, state: newState() }
+      handle = { specifier, exportName, state: newState(), soft: false }
+      if (command.op === 'ensure') handle.soft = command.soft === true
       this.handles.set(key, handle)
       this.tryAttach(handle, errors)
     }
     const state = handle.state
     switch (command.op) {
       case 'ensure':
+        // A hard ensure (test body) claims an ambient handle.
+        if (command.soft !== true) handle.soft = false
         break
       case 'set':
         state.impl = command.impl
@@ -348,9 +353,14 @@ class Registry {
   }
 
   reset(): DisposeReport {
-    // A restored pending handle is a deliberate opt-out, not a mistake.
+    // Restored pending handles are a deliberate opt-out; soft (file-level
+    // ambient) handles legitimately stay unused in tests that never load
+    // their module. Neither is a mistake worth failing the test over.
     const pending = [...this.handles.values()]
-      .filter((handle) => !handle.moduleId && !handle.errored && !handle.state.restored)
+      .filter(
+        (handle) =>
+          !handle.moduleId && !handle.errored && !handle.state.restored && !handle.soft,
+      )
       .map(describeHandle)
     const errors = this.store.errors.splice(0)
     this.handles.clear()

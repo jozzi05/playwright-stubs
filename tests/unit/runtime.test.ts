@@ -179,6 +179,21 @@ describe('pending attachment and validation', () => {
     expect(report.pending).toEqual(['mock("./missing", "foo")'])
   })
 
+  it('does not report soft (ambient) mocks that never attach', () => {
+    registerDependency()
+    send('./missing', 'foo', { op: 'ensure', soft: true })
+    const report = store().api!.reset()
+    expect(report.pending).toEqual([])
+  })
+
+  it('a hard ensure upgrades a soft handle so never-attached still fails', () => {
+    registerDependency()
+    send('./missing', 'foo', { op: 'ensure', soft: true })
+    send('./missing', 'foo') // hard ensure from test body
+    const report = store().api!.reset()
+    expect(report.pending).toEqual(['mock("./missing", "foo")'])
+  })
+
   it('getCalls on a pending mock throws with loaded module list', () => {
     registerDependency()
     send('./missing', 'foo')

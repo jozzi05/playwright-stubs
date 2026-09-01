@@ -29,7 +29,12 @@ export type ImplDescriptor =
 
 /** Commands a Node-side mock handle sends to the browser registry. */
 export type MockCommand =
-  | { op: 'ensure' }
+  /**
+   * `soft` marks ambient declarations (file-level `test.mock`, `mocks`
+   * option): they must not fail teardown when the module never loads.
+   * A later hard ensure (body-level `mock()`) upgrades the handle.
+   */
+  | { op: 'ensure'; soft?: boolean }
   | { op: 'set'; impl: ImplDescriptor }
   | { op: 'push-once'; impl: ImplDescriptor }
   | { op: 'clear' }
