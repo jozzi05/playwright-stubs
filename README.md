@@ -158,4 +158,4 @@ npm run test:ct
 npm run typecheck
 ```
 
-Requires Node 18+ (pinned to 24 via `.tool-versions`).
+Requires Node 18+ (developed on Node 24).
