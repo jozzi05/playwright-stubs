@@ -33,9 +33,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-### 4. npm Trusted Publisher (after first publish)
-
-Trusted publishing is configured **per package**, only after the package exists on npm.
+### 4. npm Trusted Publisher
 
 1. Go to **npmjs.com → Packages → `playwright-stubs` → Settings**
 2. **Trusted publishing → GitHub Actions**
@@ -44,13 +42,12 @@ Trusted publishing is configured **per package**, only after the package exists 
    - Repository: `playwright-stubs`
    - Workflow filename: `publish-release.yml`
    - Environment name: `npm`
+   - **Allowed actions:** `npm stage publish` only (not direct `npm publish`)
 4. Save
-
-**Before the first CI publish:** either configure Trusted Publisher right after workflows land on `main`, or do one manual `npm publish --access public` locally to create the package, then add Trusted Publisher.
 
 No `NPM_TOKEN` secret is needed when OIDC is configured.
 
-**Requirements:** npm CLI ≥ 11.5.1, Node ≥ 22.14, workflow `permissions: id-token: write`.
+**Requirements:** npm CLI ≥ 11.15.0 (staged publish), Node ≥ 22.14, workflow `permissions: id-token: write`.
 
 ## Day-to-day release
 
@@ -62,7 +59,8 @@ No `NPM_TOKEN` secret is needed when OIDC is configured.
    - Creates tag + GitHub Release
    - Opens/auto-merges back-merge PR **`main` → `dev`**
    - Waits for approval on the **`npm`** environment
-6. In Actions, **Review deployments → Approve** to publish to npm with provenance.
+6. In Actions, **Review deployments → Approve** — CI runs `npm stage publish` (uploads to npm’s staging queue; not installable yet).
+7. On **npmjs.com → Packages → `playwright-stubs`**, open **Staged publishes** and **approve** the version (2FA). It becomes installable after this step.
 
 ## Version bump rules (git-cliff)
 
@@ -79,5 +77,6 @@ No `NPM_TOKEN` secret is needed when OIDC is configured.
 1. **Prepare release** — only `jozzi05` can trigger (`github.actor` check)
 2. **`main` branch protection** — PR required before merge
 3. **Publish workflow** — only runs for merged `release/*` PRs
-4. **GitHub Environment `npm`** — manual approval before publish
-5. **npm OIDC Trusted Publisher** — scoped to this repo + workflow; no long-lived token in secrets
+4. **GitHub Environment `npm`** — manual approval before staging to npm
+5. **npm staged publish** — version is queued until you approve on npmjs.com (2FA)
+6. **npm OIDC Trusted Publisher** — scoped to `npm stage publish` only; no long-lived token in secrets
