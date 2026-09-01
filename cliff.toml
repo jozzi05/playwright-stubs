@@ -12,34 +12,32 @@ body = """
 {%- macro remote_url() -%}
   https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}
 {%- endmacro -%}
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
 
-{% for group, commits in commits | group_by(attribute="group") %}
-### {{ group | upper_first }}
-{% for commit in commits %}\
-    {%- set commit_message = commit.message -%}
-    * {% if commit.scope and commit.scope != "" %} {{ commit.scope }}: {% endif %}{{ commit_message | split(pat="\n") | first | trim }}\
-    {% if commit.remote.username %} by @{{ commit.remote.username }}{%- endif -%}\
-    {% if commit.remote.pr_number %} in \
-      [#{{ commit.remote.pr_number }}]({{ self::remote_url() }}/pull/{{ commit.remote.pr_number }})\
-    {%- endif %} \
-    ([{{ commit.id | truncate(length=7, end="") }}]({{ self::remote_url() }}/commit/{{ commit.id }}))
-{% endfor %}
+{% else -%}
+## [Unreleased]
+
+{% endif -%}
+{% for group, commits in commits | group_by(attribute="group") -%}
+### {{ group | split(pat=" -->") | last | trim }}
+{% for commit in commits -%}
+* {% if commit.scope and commit.scope != "" %}{{ commit.scope }}: {% endif %}{{ commit.message | split(pat="\n") | first | trim }}{% if commit.remote.username %} by @{{ commit.remote.username }}{% endif %}{% if commit.remote.pr_number %} in [#{{ commit.remote.pr_number }}]({{ self::remote_url() }}/pull/{{ commit.remote.pr_number }}){% endif %} ([{{ commit.id | truncate(length=7, end="") }}]({{ self::remote_url() }}/commit/{{ commit.id }}))
 {% endfor %}
 
+{% endfor -%}
 {%- if github -%}
 {%- if github.contributors | filter(attribute="is_first_time", value=true) | length != 0 %}
 
 ### New Contributors
 {%- for contributor in github.contributors | filter(attribute="is_first_time", value=true) %}
-    * @{{ contributor.username }} made their first contribution\
-        {%- if contributor.pr_number %} in \
-          [#{{ contributor.pr_number }}]({{ self::remote_url() }}/pull/{{ contributor.pr_number }})\
-        {%- endif %}
+* @{{ contributor.username }} made their first contribution{% if contributor.pr_number %} in [#{{ contributor.pr_number }}]({{ self::remote_url() }}/pull/{{ contributor.pr_number }}){% endif %}
 {%- endfor %}
 {%- endif -%}
 {%- endif %}
 """
-trim = false
+trim = true
+header_marker = "<!-- git-cliff: end of header -->"
 
 [git]
 conventional_commits = true
@@ -64,6 +62,7 @@ commit_parsers = [
     { message = "^chore\\(back-merge\\)", skip = true },
     { message = "(?i)^Merge pull request", skip = true },
     { message = "(?i)^Merge branch", skip = true },
+    { message = "(?i)^merge remote-tracking", skip = true },
     { message = "(?i)^Update .+\\.(yaml|yml|md|json)$", skip = true },
     { author = "dependabot\\[bot\\]", skip = true },
     { author = "github-actions\\[bot\\]", skip = true },
