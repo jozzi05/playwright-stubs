@@ -1,5 +1,4 @@
 # playwright-stubs
-
 Jest/Vitest-style **module export mocking for Playwright component tests**, running in a real browser.
 
 ```tsx
