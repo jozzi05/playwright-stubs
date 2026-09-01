@@ -1,6 +1,7 @@
 {
   "name": "playwright-stubs",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Prototype: Jest/Cypress-style module export stubbing for Playwright component tests, via import-site instrumentation and a browser-side stub registry.",
