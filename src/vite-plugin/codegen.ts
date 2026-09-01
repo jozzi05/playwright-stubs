@@ -23,7 +23,7 @@
  *    keeps evaluation-time calls in circular graphs working.
  */
 
-import type { ModuleRegistration } from '../core/protocol'
+import type { ModuleRegistration } from '../core/protocol.js'
 
 const IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 

@@ -1,0 +1,142 @@
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+"""
+body = """
+{%- macro remote_url() -%}
+  https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}
+{%- endmacro -%}
+
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}\
+    {%- set commit_message = commit.message -%}
+    * {% if commit.scope and commit.scope != "" %} {{ commit.scope }}: {% endif %}{{ commit_message | split(pat="\n") | first | trim }}\
+    {% if commit.remote.username %} by @{{ commit.remote.username }}{%- endif -%}\
+    {% if commit.remote.pr_number %} in \
+      [#{{ commit.remote.pr_number }}]({{ self::remote_url() }}/pull/{{ commit.remote.pr_number }})\
+    {%- endif %} \
+    ([{{ commit.id | truncate(length=7, end="") }}]({{ self::remote_url() }}/commit/{{ commit.id }}))
+{% endfor %}
+{% endfor %}
+
+{%- if github -%}
+{%- if github.contributors | filter(attribute="is_first_time", value=true) | length != 0 %}
+
+### New Contributors
+{%- for contributor in github.contributors | filter(attribute="is_first_time", value=true) %}
+    * @{{ contributor.username }} made their first contribution\
+        {%- if contributor.pr_number %} in \
+          [#{{ contributor.pr_number }}]({{ self::remote_url() }}/pull/{{ contributor.pr_number }})\
+        {%- endif %}
+{%- endfor %}
+{%- endif -%}
+{%- endif %}
+"""
+trim = false
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "newest"
+filter_commits = false
+
+commit_parsers = [
+    { message = "^feat", group = "<!-- 00 -->Features" },
+    { message = "^fix", group = "<!-- 01 -->Bug Fixes" },
+    { message = "^doc", group = "<!-- 02 -->Documentation" },
+    { message = "^perf", group = "<!-- 03 -->Performance" },
+    { message = "^refactor", group = "<!-- 04 -->Refactor" },
+    { message = "^style", group = "<!-- 05 -->Styling" },
+    { message = "^test", group = "<!-- 06 -->Testing" },
+    { message = "(?i)^chore\\(release\\)", skip = true },
+    { message = "^chore\\(deps.*\\)", skip = true },
+    { message = "^chore\\(pr\\)", skip = true },
+    { message = "^chore\\(pull\\)", skip = true },
+    { message = "^chore\\(back-merge\\)", skip = true },
+    { message = "(?i)^Merge pull request", skip = true },
+    { message = "(?i)^Merge branch", skip = true },
+    { message = "(?i)^Update .+\\.(yaml|yml|md|json)$", skip = true },
+    { author = "dependabot\\[bot\\]", skip = true },
+    { author = "github-actions\\[bot\\]", skip = true },
+    { message = "^ci", group = "<!-- 07 -->CI" },
+    { message = "^chore", group = "<!-- 08 -->Chore" },
+    { message = "^revert", group = "<!-- 09 -->Revert" },
+    { message = ".*", group = "<!-- 10 -->Other" },
+]
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^feat'
+replace = 'feat'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^fix'
+replace = 'fix'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^chore'
+replace = 'chore'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^docs'
+replace = 'docs'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^refactor'
+replace = 'refactor'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^style'
+replace = 'style'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^test'
+replace = 'test'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^ci'
+replace = 'ci'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^perf'
+replace = 'perf'
+
+[[git.commit_preprocessors]]
+pattern = '(?i)^build'
+replace = 'build'
+
+[[git.commit_preprocessors]]
+pattern = '^[A-Z]'
+replace_command = "sed 's/^[^:!(/]*/\\L&/'"
+
+[[git.commit_preprocessors]]
+pattern = '\\((\\w+\\s)?#([0-9]+)\\)'
+replace = ""
+
+[[git.commit_parsers]]
+author = "dependabot\\[bot\\]"
+skip = true
+
+[[git.commit_parsers]]
+author = "github-actions\\[bot\\]"
+skip = true
+
+[[git.commit_parsers]]
+message = "^Merge pull request"
+skip = true
+
+[[git.commit_parsers]]
+message = "^Merge branch"
+skip = true
+
+[bump]
+features_always_bump_minor = true
+breaking_always_bump_major = true

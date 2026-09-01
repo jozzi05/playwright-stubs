@@ -24,7 +24,7 @@ import type {
   MockCommand,
   SerializedError,
   StubStore,
-} from '../core/protocol'
+} from '../core/protocol.js'
 
 declare global {
   // eslint-disable-next-line no-var

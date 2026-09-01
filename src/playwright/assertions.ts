@@ -12,7 +12,7 @@
  */
 
 import { expect as baseExpect } from '@playwright/test'
-import { MockHandle } from './fixture'
+import { MockHandle } from './fixture.js'
 
 function isAsymmetric(value: unknown): value is { asymmetricMatch(other: unknown): boolean } {
   return (

@@ -13,23 +13,27 @@
  * default exclude list (React itself, tooling) that can be extended.
  */
 
+import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { transform as esbuildTransform } from 'esbuild'
 import type { Plugin } from 'vite'
-import type { ModuleRegistration } from '../core/protocol'
-import { derivePackageName } from '../core/module-id'
-import { analyzeModuleSource, type ModuleAnalysis } from './analyze'
-import { generateProxyModule, isEmittableName } from './codegen'
+import type { ModuleRegistration } from '../core/protocol.js'
+import { derivePackageName } from '../core/module-id.js'
+import { analyzeModuleSource, type ModuleAnalysis } from './analyze.js'
+import { generateProxyModule, isEmittableName } from './codegen.js'
 
 export const RUNTIME_SPECIFIER = 'virtual:playwright-stubs/runtime'
 const PROXY_PREFIX = '\0pw-proxy:'
 
-const RUNTIME_PATH = path.resolve(
+const RUNTIME_BASE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../core/runtime.ts',
+  '../core/runtime',
 )
+const RUNTIME_PATH = existsSync(`${RUNTIME_BASE}.js`)
+  ? `${RUNTIME_BASE}.js`
+  : `${RUNTIME_BASE}.ts`
 const CORE_DIR = path.dirname(RUNTIME_PATH)
 
 const JS_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/

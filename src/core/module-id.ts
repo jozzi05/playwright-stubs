@@ -16,7 +16,7 @@
  * more than one distinct match is an explicit ambiguity error.
  */
 
-import type { ModuleRegistration } from './protocol'
+import type { ModuleRegistration } from './protocol.js'
 
 const QUERY_RE = /[?#].*$/
 const EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/

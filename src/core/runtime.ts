@@ -25,9 +25,9 @@ import type {
   ImplDescriptor,
   ModuleRegistration,
   StubStore,
-} from './protocol'
-import { STORE_KEY } from './protocol'
-import { findModules } from './module-id'
+} from './protocol.js'
+import { STORE_KEY } from './protocol.js'
+import { findModules } from './module-id.js'
 
 type HandleRecord = {
   specifier: string
