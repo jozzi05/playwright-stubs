@@ -23,6 +23,8 @@ export default defineConfig({
     },
   ],
   webServer: {
+    // Production build for CI: npm package mocks need every import through the proxy.
+    // Local gallery development should still use `vite` (see docs/GALLERY-SETUP.md).
     command: 'vite build && vite preview --host 127.0.0.1 --port 5173',
     url: galleryUrl,
     reuseExistingServer: !process.env.CI,

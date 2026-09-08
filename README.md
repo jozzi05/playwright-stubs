@@ -109,10 +109,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'vite build && vite preview --host 127.0.0.1 --port 5173',
+    command: 'npx vite --host 127.0.0.1 --port 5173',
     url: galleryUrl,
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
   },
 })
 ```

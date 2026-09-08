@@ -9,7 +9,7 @@ Status of `playwright-stubs` against common Vite resolution scenarios. This libr
 | Relative imports (`./api`) | covered | `tests/ct/basic.spec.tsx` |
 | Root-relative path (`src/demo/api`) | covered | `tests/ct/basic.spec.tsx` |
 | Vite `resolve.alias` | covered | `tests/ct/alias.spec.tsx` — mock via canonical path (`src/demo/dependency`) |
-| Package imports (`clsx`, `classnames`) | covered | `tests/ct/packages.spec.tsx` — requires `vite build && vite preview` for tests (dev-server prebundling bypasses the proxy) |
+| Package imports (`clsx`, `classnames`) | covered | `tests/ct/packages.spec.tsx` — `playwrightStubs()` disables dep discovery so npm imports stay proxied in dev |
 | Package subpaths | planned | |
 | pnpm / monorepo workspaces | planned | |
 | Symlinked packages | planned | |

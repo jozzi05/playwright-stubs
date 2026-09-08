@@ -80,15 +80,14 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // Production build avoids Vite dev-server dep prebundling, which bypasses
-    // the stubs proxy and breaks npm package mocks.
-    command: 'vite build && vite preview --host 127.0.0.1 --port 5173',
+    command: 'npx vite --host 127.0.0.1 --port 5173',
     url: galleryUrl,
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
   },
 })
 ```
+
+For CI (or when mocking npm packages), prefer `vite build && vite preview` so every import goes through the stubs proxy — see this repo's `playwright.config.ts`.
 
 ## 5. Fixtures
 

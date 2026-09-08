@@ -17,6 +17,7 @@ describe('normalizeSpecifier', () => {
 describe('derivePackageName', () => {
   it('extracts scoped and unscoped package names', () => {
     expect(derivePackageName('/x/node_modules/clsx/dist/clsx.mjs')).toBe('clsx')
+    expect(derivePackageName('/x/node_modules/.vite/deps/clsx.js')).toBe('clsx')
     expect(derivePackageName('/x/node_modules/@company/api/dist/index.js')).toBe('@company/api')
     expect(derivePackageName('/x/src/demo/api.ts')).toBeUndefined()
   })

@@ -2,16 +2,16 @@
  * Node-side mock API and Playwright fixture.
  *
  * Declare mocks with `test.mock()` at the top of a test file. Configuration
- * methods are synchronous and chainable. Commands queue in Node and flush to
- * the browser as serialized data:
- *  - automatically before `mount()` (mocks are live before module evaluation),
- *  - automatically before any call inspection (matchers, `.calls()`),
- *  - explicitly via `await handle.sync()` for post-mount reconfiguration.
+ * methods are synchronous and chainable. Commands queue in Node and reach the
+ * browser before lazy story imports evaluate:
+ *  - via `page.evaluate` before `mount()` (after gallery navigation, before story import),
+ *  - via `page.evaluate` when flushing after mount (matchers, `.calls()`, `sync()`).
  *
  * No Node callback ever runs per invocation. `mockImplementation(fn)` ships
  * `fn.toString()` to the browser; it must be closure-free.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Page, TestType } from '@playwright/test'
@@ -165,9 +165,10 @@ export class MockController {
     const batch = this.pending
     this.pending = []
     await this.page.evaluate((commands: AddressedCommand[]) => {
-      const store = (globalThis.__PW_STUBS__ ??= { queue: [], errors: [] })
+      const host = globalThis as unknown as Record<string, StubStore | undefined>
+      const store = host.__PW_STUBS__ ??= { queue: [], errors: [] }
       store.queue.push(...commands)
-      if (store.api) store.api.apply()
+      store.api?.apply()
     }, batch)
   }
 
@@ -175,7 +176,8 @@ export class MockController {
     await this.flush()
     return this.page.evaluate(
       ({ specifier, exportName }) => {
-        const store = (globalThis.__PW_STUBS__ ??= { queue: [], errors: [] })
+        const host = globalThis as unknown as Record<string, StubStore | undefined>
+        const store = host.__PW_STUBS__ ??= { queue: [], errors: [] }
         if (!store.api) {
           throw new Error(
             `playwright-stubs: no instrumented module has loaded in this page yet; ` +
@@ -234,8 +236,9 @@ type DeclareMockFunction = ((specifier: string, exportName: string) => MockHandl
 }
 
 const handlesByFile = new Map<string, Map<string, MockHandle>>()
-const THIS_FILE = fileURLToPath(import.meta.url)
+const controllerStorage = new AsyncLocalStorage<MockController>()
 let activeController: MockController | null = null
+const THIS_FILE = fileURLToPath(import.meta.url)
 
 function handleKey(specifier: string, exportName: string): string {
   return `${specifier}\0${exportName}`
@@ -299,7 +302,8 @@ function createDeclareApi(): DeclareMockFunction {
 
   const declareAndBind = (specifier: string, exportName: string): MockHandle => {
     const handle = declare(specifier, exportName)
-    if (activeController) handle.bind(activeController)
+    const controller = controllerStorage.getStore() ?? activeController
+    if (controller) handle.bind(controller)
     return handle
   }
 
@@ -328,10 +332,12 @@ type StubsFixtures = {
 }
 
 /**
- * Extend a Playwright `test` object with file-level `test.mock()`, an
- * auto-flushing `mount`, and per-page mock lifecycle management.
+ * Extend a Playwright `test` object with file-level `test.mock()` and
+ * per-page mock lifecycle management.
  *
- * Works with Playwright 1.62+ gallery component testing (`@playwright/test`).
+ * Playwright's built-in `mount` navigates and calls `window.mount()` atomically.
+ * We mirror that contract but flush mock commands after `goto` and before
+ * `window.mount()` so lazy story imports see the configured mocks.
  */
 export function withMocks<TArgs extends object, WArgs extends object>(
   base: TestType<TArgs, WArgs>,
@@ -345,34 +351,58 @@ export function withMocks<TArgs extends object, WArgs extends object>(
       ) => {
         const controller = new MockController(page)
         activeController = controller
-        bindFileHandles(testInfo.file, controller)
-        await use(controller)
+        await controllerStorage.run(controller, async () => {
+          bindFileHandles(testInfo.file, controller)
+          await use(controller)
+          await controller.dispose()
+        })
         activeController = null
-        await controller.dispose()
       },
       { auto: true },
     ],
     mount: async (
-      { page, _pwStubsController: controller, baseURL }: {
+      {
+        page,
+        baseURL,
+        _pwStubsController: controller,
+      }: {
         page: Page
-        _pwStubsController: MockController
         baseURL: string | undefined
+        _pwStubsController: MockController
       },
-      use: (mount: (story: string, props?: Record<string, unknown>) => Promise<unknown>) => Promise<void>,
+      use: (
+        mount: (storyId: string, props?: Record<string, unknown>) => Promise<unknown>,
+      ) => Promise<void>,
     ) => {
-      await use(async (story: string, props?: Record<string, unknown>) => {
+      const callMount = async (params: { story: string; props?: Record<string, unknown> }) => {
+        await page.evaluate(async (payload) => {
+          const w = window as Window & {
+            mount?: (p: { story: string; props?: Record<string, unknown> }) => Promise<void>
+          }
+          if (typeof w.mount !== 'function') {
+            throw new Error('The gallery page does not define window.mount().')
+          }
+          await w.mount(payload)
+        }, params)
+      }
+
+      await use(async (storyId, props) => {
         if (!baseURL) {
-          throw new Error('playwright-stubs: component tests require use.baseURL pointing at the gallery page.')
+          throw new Error(
+            'playwright-stubs: component tests require use.baseURL pointing at the gallery page.',
+          )
         }
         await page.goto(baseURL)
         await controller.flush()
-        await page.evaluate(
-          ({ story, props }) => {
-            return (window as unknown as { mount: (p: { story: string; props?: Record<string, unknown> }) => Promise<void> }).mount({ story, props })
-          },
-          { story, props: props ?? {} },
-        )
-        return page.locator('#root')
+        await callMount({ story: storyId, props: props ?? {} })
+        return Object.assign(page.locator('#root'), {
+          update: (newProps?: Record<string, unknown>) =>
+            callMount({ story: storyId, props: newProps ?? {} }),
+          unmount: () =>
+            page.evaluate(async () => {
+              await (window as Window & { unmount?: () => Promise<void> }).unmount?.()
+            }),
+        })
       })
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

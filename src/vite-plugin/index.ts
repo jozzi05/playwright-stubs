@@ -91,6 +91,10 @@ export function playwrightStubs(options: PlaywrightStubsOptions = {}): Plugin {
     if (resolvedId.includes('?') || resolvedId.includes('#')) return false
     if (!JS_EXT_RE.test(resolvedId)) return false
     if (resolvedId.startsWith(CORE_DIR + path.sep)) return false
+    if (resolvedId.includes('/node_modules/.vite/deps/')) {
+      // Prebundled deps are still proxied when explicitly included for CJS interop.
+      return /\.vite\/deps\/(clsx|classnames)/.test(resolvedId)
+    }
     if (!includeNodeModules && resolvedId.includes('/node_modules/')) return false
     return !excludePatterns.some((pattern) => pattern.test(resolvedId))
   }
@@ -112,6 +116,26 @@ export function playwrightStubs(options: PlaywrightStubsOptions = {}): Plugin {
   return {
     name: 'playwright-stubs',
     enforce: 'pre',
+
+    config() {
+      // Dev-server dep prebundling serves optimized copies from node_modules/.vite/deps
+      // that bypass resolveId. Disable discovery so proxied imports stay on real paths.
+      // React is prebundled explicitly because it is excluded from proxying anyway.
+      return {
+        optimizeDeps: {
+          noDiscovery: true,
+          include: [
+            'react',
+            'react-dom',
+            'react-dom/client',
+            'react/jsx-runtime',
+            'react/jsx-dev-runtime',
+            'clsx',
+            'classnames',
+          ],
+        },
+      }
+    },
 
     configResolved(config) {
       root = config.root

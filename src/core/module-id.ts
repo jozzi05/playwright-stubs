@@ -33,6 +33,8 @@ export function normalizeSpecifier(spec: string): string {
 }
 
 export function derivePackageName(id: string): string | undefined {
+  const viteDep = id.match(/node_modules\/\.vite\/deps\/((?:@[^/]+\/)?[^./?]+)/)
+  if (viteDep) return viteDep[1]
   const match = id.match(/node_modules\/((?:@[^/]+\/)?[^/?]+)(?!.*node_modules)/)
   return match ? match[1] : undefined
 }
