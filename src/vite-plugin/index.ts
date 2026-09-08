@@ -64,7 +64,7 @@ export type PlaywrightStubsOptions = {
   debug?: boolean
   /** Additional patterns (tested against resolved ids) to leave untouched. */
   exclude?: RegExp[]
-  /** Proxy modules inside node_modules (default true). */
+  /** Proxy modules inside node_modules (default false). */
   includeNodeModules?: boolean
 }
 
@@ -76,7 +76,7 @@ type DiscoveredExports = {
 
 export function playwrightStubs(options: PlaywrightStubsOptions = {}): Plugin {
   const excludePatterns = [...DEFAULT_EXCLUDE, ...(options.exclude ?? [])]
-  const includeNodeModules = options.includeNodeModules ?? true
+  const includeNodeModules = options.includeNodeModules ?? false
 
   let root = process.cwd()
   const specifierMap = new Map<string, Set<string>>()
@@ -130,6 +130,8 @@ export function playwrightStubs(options: PlaywrightStubsOptions = {}): Plugin {
             'react-dom/client',
             'react/jsx-runtime',
             'react/jsx-dev-runtime',
+            // The integration build exercises interception of these packages.
+            // In dev, prebundling avoids CJS interop differences in the gallery.
             'clsx',
             'classnames',
           ],

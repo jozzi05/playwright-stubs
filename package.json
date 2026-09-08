@@ -33,9 +33,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run build && npm test",
-    "test": "npm run test:transform && npm run test:ct",
+    "test": "npm run test:transform && npm run test:ct && npm run test:ct:packages",
     "test:transform": "vitest run",
     "test:ct": "node node_modules/@playwright/test/cli.js test -c playwright.config.ts",
+    "test:ct:packages": "node node_modules/@playwright/test/cli.js test -c playwright.packages.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -224,6 +224,7 @@ class Registry {
         state.impl = null
         state.onceQueue = []
         state.calls = []
+        state.restored = false
         break
       case 'restore':
         state.impl = null

@@ -14,7 +14,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Page, TestType } from '@playwright/test'
+import type { Locator, Page, TestType } from '@playwright/test'
 import type {
   AddressedCommand,
   ImplDescriptor,
@@ -36,41 +36,45 @@ function serializeError(error: unknown): SerializedError {
 }
 
 export class MockHandle {
-  private controller: MockController | null
-  private readonly preBindQueue: MockCommand[] = []
   /** File-level declarations replayed on every test bind. */
   private readonly replayOps: MockCommand[] = []
 
   constructor(
-    controller: MockController | null,
     readonly specifier: string,
     readonly exportName: string,
     private readonly ambient = false,
-  ) {
-    this.controller = controller
-  }
+  ) {}
 
   bind(controller: MockController): void {
-    this.controller = controller
-    this.enqueue({ op: 'ensure', soft: this.ambient })
+    controller.enqueue({
+      specifier: this.specifier,
+      exportName: this.exportName,
+      command: { op: 'ensure', soft: this.ambient },
+    })
     for (const command of this.replayOps) {
-      this.enqueue(command)
-    }
-    for (const command of this.preBindQueue.splice(0)) {
-      this.enqueue(command)
+      controller.enqueue({ specifier: this.specifier, exportName: this.exportName, command })
     }
   }
 
-  private enqueue(command: MockCommand, replay = false): this {
-    if (!this.controller) {
-      if (replay) {
-        this.replayOps.push(command)
-      } else {
-        this.preBindQueue.push(command)
-      }
+  activate(): this {
+    const controller = controllerStorage.getStore() ?? activeController
+    if (controller) {
+      controller.enqueue({
+        specifier: this.specifier,
+        exportName: this.exportName,
+        command: { op: 'ensure', soft: false },
+      })
+    }
+    return this
+  }
+
+  private enqueue(command: MockCommand): this {
+    const controller = controllerStorage.getStore() ?? activeController
+    if (!controller) {
+      this.replayOps.push(command)
       return this
     }
-    this.controller.enqueue({
+    controller.enqueue({
       specifier: this.specifier,
       exportName: this.exportName,
       command,
@@ -79,7 +83,7 @@ export class MockHandle {
   }
 
   private configure(command: MockCommand): this {
-    return this.enqueue(command, !this.controller)
+    return this.enqueue(command)
   }
 
   mockImplementation(fn: (...args: never[]) => unknown): this {
@@ -131,45 +135,63 @@ export class MockHandle {
   }
 
   async sync(): Promise<void> {
-    if (!this.controller) {
+    const controller = controllerStorage.getStore() ?? activeController
+    if (!controller) {
       throw new Error(
         `playwright-stubs: cannot sync mock(${JSON.stringify(this.specifier)}, ` +
           `${JSON.stringify(this.exportName)}) before the test starts.`,
       )
     }
-    await this.controller.flush()
+    await controller.flush()
   }
 
   async calls(): Promise<unknown[][]> {
-    if (!this.controller) {
+    const controller = controllerStorage.getStore() ?? activeController
+    if (!controller) {
       throw new Error(
         `playwright-stubs: cannot read calls for mock(${JSON.stringify(this.specifier)}, ` +
           `${JSON.stringify(this.exportName)}) before the test starts.`,
       )
     }
-    return this.controller.fetchCalls(this.specifier, this.exportName)
+    return controller.fetchCalls(this.specifier, this.exportName)
   }
 }
 
 export class MockController {
   private pending: AddressedCommand[] = []
+  /** All configuration commands, replayed after each gallery navigation. */
+  private readonly commands: AddressedCommand[] = []
 
   constructor(private readonly page: Page) {}
 
   enqueue(command: AddressedCommand): void {
     this.pending.push(command)
+    this.commands.push(command)
   }
 
-  async flush(): Promise<void> {
-    if (this.pending.length === 0) return
-    const batch = this.pending
-    this.pending = []
+  private async send(commands: AddressedCommand[]): Promise<void> {
+    if (commands.length === 0) return
     await this.page.evaluate((commands: AddressedCommand[]) => {
       const host = globalThis as unknown as Record<string, StubStore | undefined>
       const store = host.__PW_STUBS__ ??= { queue: [], errors: [] }
       store.queue.push(...commands)
       store.api?.apply()
-    }, batch)
+    }, commands)
+  }
+
+  async flush(): Promise<void> {
+    const batch = this.pending
+    this.pending = []
+    await this.send(batch)
+  }
+
+  /**
+   * A custom mount navigates to a fresh gallery document. Re-send the complete
+   * command history so mocks retain their state across multiple mount() calls.
+   */
+  async replay(): Promise<void> {
+    this.pending = []
+    await this.send(this.commands)
   }
 
   async fetchCalls(specifier: string, exportName: string): Promise<unknown[][]> {
@@ -237,6 +259,9 @@ type DeclareMockFunction = ((specifier: string, exportName: string) => MockHandl
 
 const handlesByFile = new Map<string, Map<string, MockHandle>>()
 const controllerStorage = new AsyncLocalStorage<MockController>()
+// Playwright invokes the test callback outside the fixture's AsyncLocalStorage
+// scope. Keep this fallback for that runner boundary; workers still isolate
+// concurrent tests, while AsyncLocalStorage covers fixture-owned async work.
 let activeController: MockController | null = null
 const THIS_FILE = fileURLToPath(import.meta.url)
 
@@ -276,7 +301,7 @@ function getOrCreateDeclaredHandle(
   const key = handleKey(specifier, exportName)
   let handle = fileHandles.get(key)
   if (!handle) {
-    handle = new MockHandle(null, specifier, exportName, true)
+    handle = new MockHandle(specifier, exportName, true)
     fileHandles.set(key, handle)
   }
   return handle
@@ -302,9 +327,7 @@ function createDeclareApi(): DeclareMockFunction {
 
   const declareAndBind = (specifier: string, exportName: string): MockHandle => {
     const handle = declare(specifier, exportName)
-    const controller = controllerStorage.getStore() ?? activeController
-    if (controller) handle.bind(controller)
-    return handle
+    return handle.activate()
   }
 
   return Object.assign(declareAndBind, {
@@ -329,6 +352,33 @@ function createDeclareApi(): DeclareMockFunction {
 
 type StubsFixtures = {
   _pwStubsController: MockController
+}
+
+type ComponentLocator = Locator & {
+  update: (newProps?: Record<string, unknown>) => Promise<void>
+  unmount: () => Promise<void>
+}
+
+type CallMount = (params: { story: string; props?: Record<string, unknown> }) => Promise<void>
+
+/**
+ * Compatibility layer for Playwright's component locator shape. It is kept
+ * deliberately small because withMocks must own the mount boundary in order
+ * to flush mocks after gallery navigation and before the lazy story import.
+ */
+function createComponentLocator(
+  page: Page,
+  storyId: string,
+  callMount: CallMount,
+): ComponentLocator {
+  return Object.assign(page.locator('#root'), {
+    update: (newProps?: Record<string, unknown>) =>
+      callMount({ story: storyId, props: newProps ?? {} }),
+    unmount: () =>
+      page.evaluate(async () => {
+        await (window as Window & { unmount?: () => Promise<void> }).unmount?.()
+      }),
+  })
 }
 
 /**
@@ -393,16 +443,9 @@ export function withMocks<TArgs extends object, WArgs extends object>(
           )
         }
         await page.goto(baseURL)
-        await controller.flush()
+        await controller.replay()
         await callMount({ story: storyId, props: props ?? {} })
-        return Object.assign(page.locator('#root'), {
-          update: (newProps?: Record<string, unknown>) =>
-            callMount({ story: storyId, props: newProps ?? {} }),
-          unmount: () =>
-            page.evaluate(async () => {
-              await (window as Window & { unmount?: () => Promise<void> }).unmount?.()
-            }),
-        })
+        return createComponentLocator(page, storyId, callMount)
       })
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

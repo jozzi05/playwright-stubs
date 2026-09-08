@@ -29,7 +29,7 @@ Plugin options:
 |---|---|---|
 | `debug` | `false` | Log proxied modules |
 | `exclude` | React, tooling, gallery | Extra exclude patterns |
-| `includeNodeModules` | `true` | Proxy npm packages |
+| `includeNodeModules` | `false` | Proxy npm packages when explicitly enabled |
 
 The gallery entry (`playwright/gallery/`) is excluded from proxying automatically — it must define `window.mount`.
 
@@ -87,7 +87,7 @@ export default defineConfig({
 })
 ```
 
-For CI (or when mocking npm packages), prefer `vite build && vite preview` so every import goes through the stubs proxy — see this repo's `playwright.config.ts`.
+Use the Vite dev server as the canonical test path, including in CI, so both environments exercise the same module graph. Run a separate build-and-preview check for production compatibility. npm package interception is optional (`includeNodeModules: true`) and should be verified in that production check: Vite's dev optimizer may prebundle CJS packages before the plugin's resolver sees them.
 
 ## 5. Fixtures
 
@@ -137,3 +137,24 @@ test('updates mock after mount', async ({ mount }) => {
   await component.getByRole('button', { name: 'recalc' }).click()
 })
 ```
+
+## Lifecycle and compatibility
+
+`playwright-stubs` intentionally supplies its own `mount` fixture. Playwright owns the browser and test lifecycle; Vite owns the module graph; this package intercepts dependencies between them. The fixture mirrors Playwright's component locator contract, but adds the required synchronization point:
+
+```text
+gallery navigation → mock command flush → window.mount() → lazy story import
+```
+
+That flush must occur before the story imports its component dependencies. The custom mount also replays configuration after every navigation, so repeated `mount()` calls retain mock configuration. Browser-side call history belongs to the current document and starts fresh after a new mount.
+
+`test.mock()` determines the owning test file from the Node stack at declaration time. Declare it at the top level of a test file; this is an intentional compatibility constraint.
+
+## Mock lifecycle semantics
+
+| Operation | Recorded calls | Implementation |
+|---|---|---|
+| `mockClear()` | cleared | unchanged |
+| `mockReset()` | cleared | mock removed; calls pass through and remain spyable |
+| `mockRestore()` | retained | original export restored; no further calls recorded |
+| next test | empty | file-level declarations replay; test-body configuration does not leak |

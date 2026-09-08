@@ -4,6 +4,9 @@ Jest/Vitest-style **module export mocking** for Playwright component tests in a 
 
 Standalone npm library — **Vite only**. Not part of Playwright core.
 
+Playwright owns the browser/test lifecycle, Vite owns the module graph, and
+`playwright-stubs` adds dependency interception between them.
+
 ```tsx
 import { test, expect } from './fixtures'
 
@@ -151,6 +154,12 @@ test('renders', async ({ mount }) => {
 | `await expect(handle).toHaveBeenCalledWith(...)` | async matchers |
 
 `test.mock.module(specifier, { name: fn })` mocks several exports at once (function implementations only).
+
+The fixture intentionally replaces Playwright's built-in `mount`: it flushes
+mock commands after gallery navigation but before the lazy story import
+evaluates. See [the gallery setup guide](./docs/GALLERY-SETUP.md#lifecycle-and-compatibility)
+for the lifecycle, repeated-mount behavior, and the `test.mock()` stack-trace
+compatibility constraint.
 
 ### When to use what
 

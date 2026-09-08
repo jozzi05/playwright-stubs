@@ -4,7 +4,8 @@ import react from '@vitejs/plugin-react'
 import { playwrightStubs } from './src/vite-plugin/index.ts'
 
 export default defineConfig({
-  plugins: [react(), playwrightStubs()],
+  // Exercise optional npm-package interception in the integration suite.
+  plugins: [react(), playwrightStubs({ includeNodeModules: true })],
   build: {
     rollupOptions: {
       input: path.resolve(__dirname, 'playwright/gallery/index.html'),

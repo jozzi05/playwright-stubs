@@ -2,16 +2,16 @@ import { defineConfig, devices } from '@playwright/test'
 
 const galleryUrl = 'http://127.0.0.1:5173/playwright/gallery/index.html'
 
+/**
+ * npm dependency interception is separately exercised against Vite's
+ * production module graph. Vite dev prebundles CJS packages before resolveId.
+ */
 export default defineConfig({
   testDir: './tests/ct',
-  testIgnore: '**/packages.spec.tsx',
+  testMatch: '**/packages.spec.tsx',
   fullyParallel: true,
-  forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
   reporter: 'list',
-  use: {
-    trace: 'on-first-retry',
-  },
+  use: { trace: 'on-first-retry' },
   projects: [
     {
       name: 'chromium',
@@ -24,8 +24,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // Component tests use the same Vite dev-server module graph in CI and locally.
-    command: 'vite --host 127.0.0.1 --port 5173',
+    command: 'vite build && vite preview --host 127.0.0.1 --port 5173',
     url: galleryUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
