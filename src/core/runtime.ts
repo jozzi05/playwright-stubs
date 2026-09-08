@@ -86,9 +86,9 @@ function toImplementation(descriptor: ImplDescriptor): (...args: unknown[]) => u
       fn = () => Promise.reject(reviveError(descriptor.error))
       break
     case 'implementation':
-      // Indirect eval compiles in the browser's global scope. Closures over
-      // Node variables cannot survive the trip -- documented limitation.
-      fn = (0, eval)(`(${descriptor.fnSource})`)
+      // Compile closure-free function sources in the browser global scope.
+      // Prefer mockReturnValue/mockResolvedValue when possible (no compilation).
+      fn = new Function(`return (${descriptor.fnSource})`)() as (...args: unknown[]) => unknown
       break
   }
   compiledImplementations.set(descriptor, fn)

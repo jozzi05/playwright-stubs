@@ -44,9 +44,8 @@ const DEFAULT_EXCLUDE: RegExp[] = [
   /node_modules\/(react|react-dom|react-refresh|scheduler)\//,
   // Tooling and test infrastructure.
   /node_modules\/(@vitejs|vite|@playwright|playwright|playwright-core)\//,
-  /node_modules\/\.vite\//,
-  // The Playwright CT bootstrap.
-  /\/playwright\/index\.[tj]sx?$/,
+  // Playwright gallery bootstrap — must not be proxied (defines window.mount).
+  /\/playwright\/gallery\//,
 ]
 
 const ESBUILD_LOADERS: Record<string, 'ts' | 'tsx' | 'jsx'> = {
