@@ -16,7 +16,8 @@
     "src",
     "tests",
     "playwright",
-    "playwright-ct.config.ts",
+    "playwright.config.ts",
+    "vite.config.ts",
     "vitest.config.ts"
   ]
 }

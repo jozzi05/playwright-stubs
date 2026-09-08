@@ -4,15 +4,14 @@
  * arguments, and prove the original behavior survives in a sibling test.
  */
 
-import { Component } from '../../src/demo/Component'
 import { expect, test } from './fixtures'
 
-test('mocked dependency drives the render', async ({ mount, mock }) => {
-  const foo = mock('./dependency', 'foo')
+const foo = test.mock('./dependency', 'foo')
 
+test('mocked dependency drives the render', async ({ mount }) => {
   foo.mockReturnValue(999)
 
-  const component = await mount(<Component />)
+  const component = await mount('demo/Component/Default')
 
   await expect(component.getByText('999')).toBeVisible()
   await expect(foo).toHaveBeenCalledWith(10)
@@ -20,35 +19,32 @@ test('mocked dependency drives the render', async ({ mount, mock }) => {
 })
 
 test('original implementation is used when nothing is mocked', async ({ mount }) => {
-  const component = await mount(<Component />)
+  const component = await mount('demo/Component/Default')
 
   await expect(component.getByText('20')).toBeVisible()
 })
 
-test('a bare mock() acts as a spy: passthrough plus call recording', async ({ mount, mock }) => {
-  const foo = mock('./dependency', 'foo')
-
-  const component = await mount(<Component />)
+test('a bare mock acts as a spy: passthrough plus call recording', async ({ mount }) => {
+  const component = await mount('demo/Component/Default')
 
   await expect(component.getByText('20')).toBeVisible()
   await expect(foo).toHaveBeenCalledWith(10)
 })
 
-test('mockRestore removes the stub entirely', async ({ mount, mock }) => {
-  const foo = mock('./dependency', 'foo')
+test('mockRestore removes the stub entirely', async ({ mount }) => {
   foo.mockReturnValue(999)
   foo.mockRestore()
 
-  const component = await mount(<Component />)
+  const component = await mount('demo/Component/Default')
 
   await expect(component.getByText('20')).toBeVisible()
 })
 
-test('the mock specifier can also be a root-relative module path', async ({ mount, mock }) => {
-  const foo = mock('src/demo/dependency', 'foo')
-  foo.mockReturnValue(777)
+test('the mock specifier can also be a root-relative module path', async ({ mount }) => {
+  const aliased = test.mock('src/demo/dependency', 'foo')
+  aliased.mockReturnValue(777)
 
-  const component = await mount(<Component />)
+  const component = await mount('demo/Component/Default')
 
   await expect(component.getByText('777')).toBeVisible()
 })

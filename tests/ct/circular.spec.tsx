@@ -1,26 +1,25 @@
 /**
- * Circular dependencies, including an evaluation-time call across the cycle.
- * Hoisted proxy wrappers keep function declarations reachable during module
- * instantiation, exactly like plain ESM.
+ * Circular dependencies, including evaluation-time calls across the cycle.
  */
 
-import { CircularPanel } from '../../src/demo/CircularPanel'
 import { expect, test } from './fixtures'
 
+const fromB = test.mock('./circ-b', 'fromB')
+
 test('circular modules evaluate and run unmocked', async ({ mount }) => {
-  const component = await mount(<CircularPanel />)
+  fromB.mockRestore()
+
+  const component = await mount('demo/CircularPanel/Default')
 
   await expect(component.getByTestId('combo')).toHaveText('B+A')
   await expect(component.getByTestId('early')).toHaveText('A')
 })
 
-test('a function inside the cycle is mockable', async ({ mount, mock }) => {
-  const fromB = mock('./circ-b', 'fromB')
+test('a function inside the cycle is mockable', async ({ mount }) => {
   fromB.mockReturnValue('MOCK')
 
-  const component = await mount(<CircularPanel />)
+  const component = await mount('demo/CircularPanel/Default')
 
   await expect(component.getByTestId('combo')).toHaveText('MOCK+A')
-  // The evaluation-time value was computed before any mock could matter.
   await expect(component.getByTestId('early')).toHaveText('A')
 })

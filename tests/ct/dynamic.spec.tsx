@@ -1,17 +1,15 @@
 /**
- * Dynamic import: `import('./heavy')` resolves through the same proxy
- * redirection as static imports. A mock registered before the lazy module
- * loads attaches the moment it evaluates.
+ * Dynamic import resolves through the same proxy as static imports.
  */
 
-import { LazyCompute } from '../../src/demo/LazyCompute'
 import { expect, test } from './fixtures'
 
-test('mock applies to a lazily imported module', async ({ mount, mock }) => {
-  const compute = mock('./heavy', 'compute')
+const compute = test.mock('./heavy', 'compute')
+
+test('mock applies to a lazily imported module', async ({ mount }) => {
   compute.mockReturnValue(-1)
 
-  const component = await mount(<LazyCompute />)
+  const component = await mount('demo/LazyCompute/Default')
   await expect(component.locator('output')).toHaveText('idle')
 
   await component.getByRole('button', { name: 'compute' }).click()
@@ -21,7 +19,9 @@ test('mock applies to a lazily imported module', async ({ mount, mock }) => {
 })
 
 test('lazily imported module keeps original behavior unmocked', async ({ mount }) => {
-  const component = await mount(<LazyCompute />)
+  compute.mockRestore()
+
+  const component = await mount('demo/LazyCompute/Default')
 
   await component.getByRole('button', { name: 'compute' }).click()
 

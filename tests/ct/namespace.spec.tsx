@@ -1,17 +1,15 @@
 /**
- * Namespace imports (`import * as calc`): the namespace object is the proxy
- * module's own namespace, so its members are the same shared wrappers named
- * imports get -- no extra mechanism involved.
+ * Namespace imports share the same stable wrappers as named imports.
  */
 
-import { CalcPanel } from '../../src/demo/CalcPanel'
 import { expect, test } from './fixtures'
 
-test('namespace member is mockable; siblings stay original', async ({ mount, mock }) => {
-  const add = mock('./calc', 'add')
+const add = test.mock('./calc', 'add')
+
+test('namespace member is mockable; siblings stay original', async ({ mount }) => {
   add.mockReturnValue(1000)
 
-  const component = await mount(<CalcPanel />)
+  const component = await mount('demo/CalcPanel/Default')
 
   await expect(component.getByTestId('add')).toHaveText('1000')
   await expect(component.getByTestId('mul')).toHaveText('6')
@@ -19,7 +17,9 @@ test('namespace member is mockable; siblings stay original', async ({ mount, moc
 })
 
 test('namespace usage keeps original behavior unmocked', async ({ mount }) => {
-  const component = await mount(<CalcPanel />)
+  add.mockRestore()
+
+  const component = await mount('demo/CalcPanel/Default')
 
   await expect(component.getByTestId('add')).toHaveText('5')
   await expect(component.getByTestId('mul')).toHaveText('6')
