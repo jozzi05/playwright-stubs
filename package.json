@@ -1,6 +1,6 @@
 {
   "name": "playwright-stubs",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "description": "Jest/Vitest-style module export mocking for Playwright component tests in a real browser.",
@@ -35,7 +35,7 @@
     "prepublishOnly": "npm run build && npm test",
     "test": "npm run test:transform && npm run test:ct",
     "test:transform": "vitest run",
-    "test:ct": "playwright test -c playwright-ct.config.ts",
+    "test:ct": "node node_modules/@playwright/test/cli.js test -c playwright.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -47,12 +47,12 @@
     "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
   },
   "devDependencies": {
-    "@playwright/experimental-ct-react": "latest",
     "@playwright/test": "^1.62.1",
     "@types/classnames": "^2.3.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
     "classnames": "^2.5.1",
     "clsx": "^2.1.1",
     "react": "^19.0.0",
