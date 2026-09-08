@@ -69,7 +69,7 @@ function describe(handle: MockHandle): string {
 function assertHandle(received: unknown): MockHandle {
   if (received instanceof MockHandle) return received
   throw new Error(
-    'This matcher only supports mock handles created by the playwright-stubs `mock` fixture.',
+    'This matcher only supports mock handles created by `test.mock()`.',
   )
 }
 

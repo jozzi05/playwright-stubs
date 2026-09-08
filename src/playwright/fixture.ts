@@ -1,15 +1,12 @@
 /**
  * Node-side mock API and Playwright fixture.
  *
- * `mock()` and its configuration methods are synchronous and chainable.
- * Commands queue in Node and flush to the browser as serialized data:
+ * Declare mocks with `test.mock()` at the top of a test file. Configuration
+ * methods are synchronous and chainable. Commands queue in Node and flush to
+ * the browser as serialized data:
  *  - automatically before `mount()` (mocks are live before module evaluation),
  *  - automatically before any call inspection (matchers, `.calls()`),
  *  - explicitly via `await handle.sync()` for post-mount reconfiguration.
- *
- * Validation is loud: unknown exports and ambiguous specifiers reject the
- * flushing call; mocks that never attach to a loaded module fail the test at
- * teardown with an explanatory message.
  *
  * No Node callback ever runs per invocation. `mockImplementation(fn)` ships
  * `fn.toString()` to the browser; it must be closure-free.
@@ -39,16 +36,40 @@ function serializeError(error: unknown): SerializedError {
 }
 
 export class MockHandle {
+  private controller: MockController | null
+  private readonly preBindQueue: MockCommand[] = []
+  /** File-level declarations replayed on every test bind. */
+  private readonly replayOps: MockCommand[] = []
+
   constructor(
-    private readonly controller: MockController,
+    controller: MockController | null,
     readonly specifier: string,
     readonly exportName: string,
-    ambient = false,
+    private readonly ambient = false,
   ) {
-    this.enqueue(ambient ? { op: 'ensure', soft: true } : { op: 'ensure' })
+    this.controller = controller
   }
 
-  private enqueue(command: MockCommand): this {
+  bind(controller: MockController): void {
+    this.controller = controller
+    this.enqueue({ op: 'ensure', soft: this.ambient })
+    for (const command of this.replayOps) {
+      this.enqueue(command)
+    }
+    for (const command of this.preBindQueue.splice(0)) {
+      this.enqueue(command)
+    }
+  }
+
+  private enqueue(command: MockCommand, replay = false): this {
+    if (!this.controller) {
+      if (replay) {
+        this.replayOps.push(command)
+      } else {
+        this.preBindQueue.push(command)
+      }
+      return this
+    }
     this.controller.enqueue({
       specifier: this.specifier,
       exportName: this.exportName,
@@ -57,24 +78,28 @@ export class MockHandle {
     return this
   }
 
+  private configure(command: MockCommand): this {
+    return this.enqueue(command, !this.controller)
+  }
+
   mockImplementation(fn: (...args: never[]) => unknown): this {
-    return this.enqueue({ op: 'set', impl: { type: 'implementation', fnSource: fn.toString() } })
+    return this.configure({ op: 'set', impl: { type: 'implementation', fnSource: fn.toString() } })
   }
 
   mockReturnValue(value: unknown): this {
-    return this.enqueue({ op: 'set', impl: { type: 'returnValue', value } })
+    return this.configure({ op: 'set', impl: { type: 'returnValue', value } })
   }
 
   mockResolvedValue(value: unknown): this {
-    return this.enqueue({ op: 'set', impl: { type: 'resolvedValue', value } })
+    return this.configure({ op: 'set', impl: { type: 'resolvedValue', value } })
   }
 
   mockRejectedValue(error: unknown): this {
-    return this.enqueue({ op: 'set', impl: { type: 'rejectedValue', error: serializeError(error) } })
+    return this.configure({ op: 'set', impl: { type: 'rejectedValue', error: serializeError(error) } })
   }
 
   private enqueueOnce(impl: ImplDescriptor): this {
-    return this.enqueue({ op: 'push-once', impl })
+    return this.configure({ op: 'push-once', impl })
   }
 
   mockImplementationOnce(fn: (...args: never[]) => unknown): this {
@@ -93,70 +118,47 @@ export class MockHandle {
     return this.enqueueOnce({ type: 'rejectedValue', error: serializeError(error) })
   }
 
-  /** Forget recorded calls; keep the configured implementation. */
   mockClear(): this {
-    return this.enqueue({ op: 'clear' })
+    return this.configure({ op: 'clear' })
   }
 
-  /** Forget calls, implementation and the once-queue; keep spying. */
   mockReset(): this {
-    return this.enqueue({ op: 'reset' })
+    return this.configure({ op: 'reset' })
   }
 
-  /** Stop mocking and recording; calls go straight to the original. */
   mockRestore(): this {
-    return this.enqueue({ op: 'restore' })
+    return this.configure({ op: 'restore' })
   }
 
-  /** Flush queued commands to the browser (needed after `mount()`). */
   async sync(): Promise<void> {
+    if (!this.controller) {
+      throw new Error(
+        `playwright-stubs: cannot sync mock(${JSON.stringify(this.specifier)}, ` +
+          `${JSON.stringify(this.exportName)}) before the test starts.`,
+      )
+    }
     await this.controller.flush()
   }
 
-  /** Recorded call argument lists (sanitized snapshots taken at call time). */
   async calls(): Promise<unknown[][]> {
+    if (!this.controller) {
+      throw new Error(
+        `playwright-stubs: cannot read calls for mock(${JSON.stringify(this.specifier)}, ` +
+          `${JSON.stringify(this.exportName)}) before the test starts.`,
+      )
+    }
     return this.controller.fetchCalls(this.specifier, this.exportName)
   }
 }
 
 export class MockController {
   private pending: AddressedCommand[] = []
-  /** While true, created handles are ambient (soft) declarations. */
-  ambient = false
 
   constructor(private readonly page: Page) {}
 
   enqueue(command: AddressedCommand): void {
     this.pending.push(command)
   }
-
-  private createHandle = (specifier: string, exportName: string): MockHandle => {
-    return new MockHandle(this, specifier, exportName, this.ambient)
-  }
-
-  mock: MockFunction = Object.assign(this.createHandle, {
-    /**
-     * Mock several exports of one module at once. Implementations run in the
-     * browser and must be closure-free functions.
-     */
-    module: (
-      specifier: string,
-      implementations: Record<string, (...args: never[]) => unknown>,
-    ): Record<string, MockHandle> => {
-      const handles: Record<string, MockHandle> = {}
-      for (const [exportName, fn] of Object.entries(implementations)) {
-        if (typeof fn !== 'function') {
-          throw new Error(
-            `playwright-stubs: mock.module("${specifier}") supports function ` +
-              `implementations only; "${exportName}" is ${typeof fn}. ` +
-              `Use mock("${specifier}", "${exportName}").mockReturnValue(...) for values.`,
-          )
-        }
-        handles[exportName] = this.createHandle(specifier, exportName).mockImplementation(fn)
-      }
-      return handles
-    },
-  })
 
   async flush(): Promise<void> {
     if (this.pending.length === 0) return
@@ -165,8 +167,6 @@ export class MockController {
     await this.page.evaluate((commands: AddressedCommand[]) => {
       const store = (globalThis.__PW_STUBS__ ??= { queue: [], errors: [] })
       store.queue.push(...commands)
-      // Apply immediately when the runtime is live; otherwise the queue
-      // drains as soon as the first instrumented module evaluates.
       if (store.api) store.api.apply()
     }, batch)
   }
@@ -190,11 +190,6 @@ export class MockController {
     )
   }
 
-  /**
-   * Test teardown: wipe mock state (critical when contexts are reused) and
-   * surface deferred failures -- mocks that never attached to any loaded
-   * module, and validation errors nothing else reported.
-   */
   async dispose(): Promise<void> {
     this.pending = []
     let report: { pending: string[]; errors: string[] } | null = null
@@ -203,7 +198,6 @@ export class MockController {
         const store = globalThis.__PW_STUBS__
         if (!store) return { pending: [], errors: [] }
         if (store.api) return store.api.reset()
-        // Runtime never loaded: anything queued cannot have attached.
         const pending = [
           ...new Set(
             store.queue.map(
@@ -215,7 +209,6 @@ export class MockController {
         return { pending, errors: store.errors.splice(0) }
       })
     } catch {
-      // Page already closed; nothing can leak from a closed page.
       return
     }
 
@@ -233,53 +226,21 @@ export class MockController {
   }
 }
 
-export type MockFunction = ((specifier: string, exportName: string) => MockHandle) & {
+type DeclareMockFunction = ((specifier: string, exportName: string) => MockHandle) & {
   module(
     specifier: string,
     implementations: Record<string, (...args: never[]) => unknown>,
   ): Record<string, MockHandle>
 }
 
-/**
- * File/describe-level mock setup, the vi.mock/jest.mock analog:
- *
- *   test.use({
- *     mocks: [
- *       (mock) => {
- *         mock('./api', 'getUser').mockResolvedValue(user)
- *       },
- *     ],
- *   })
- *
- * Runs before every test in scope (each test has its own page, so "declare
- * once" necessarily means "apply per test"). Tests can still call `mock()`
- * on top; later commands win for the same export. The value is an array
- * because Playwright interprets bare function option values as fixture
- * definitions.
- */
-export type MocksSetup = (mock: MockFunction) => void | Promise<void>
+const handlesByFile = new Map<string, Map<string, MockHandle>>()
+const THIS_FILE = fileURLToPath(import.meta.url)
+let activeController: MockController | null = null
 
-/** Identity helper that gives `test.use({ mocks })` full type inference. */
-export function defineMocks(...setups: MocksSetup[]): MocksSetup[] {
-  return setups
+function handleKey(specifier: string, exportName: string): string {
+  return `${specifier}\0${exportName}`
 }
 
-export type MockFixtures = { mock: MockFunction; mocks: MocksSetup[] | undefined }
-
-// ---------------------------------------------------------------------------
-// File-level declarations: `test.mock(...)` at the top of a test file, the
-// closest analog to vi.mock/jest.mock. Declarations are recorded per test
-// file at load time and auto-applied (as ambient/soft mocks) to every test in
-// that file, before the `mocks` option and the test body.
-// ---------------------------------------------------------------------------
-
-type DeclaredSpec = { specifier: string; exportName: string; ops: MockCommand[] }
-
-const declaredByFile = new Map<string, DeclaredSpec[]>()
-
-const THIS_FILE = fileURLToPath(import.meta.url)
-
-/** The test file that called test.mock(), from the stack (source-mapped). */
 function callerFile(): string | null {
   const stack = new Error().stack?.split('\n') ?? []
   for (const line of stack) {
@@ -299,83 +260,55 @@ function callerFile(): string | null {
   return null
 }
 
-/** Configuration-only handle returned by `test.mock()` (no page exists yet). */
-export class DeclaredMockHandle {
-  constructor(private readonly ops: MockCommand[]) {}
-
-  private push(command: MockCommand): this {
-    this.ops.push(command)
-    return this
+function getOrCreateDeclaredHandle(
+  file: string,
+  specifier: string,
+  exportName: string,
+): MockHandle {
+  let fileHandles = handlesByFile.get(file)
+  if (!fileHandles) {
+    fileHandles = new Map()
+    handlesByFile.set(file, fileHandles)
   }
-
-  mockImplementation(fn: (...args: never[]) => unknown): this {
-    return this.push({ op: 'set', impl: { type: 'implementation', fnSource: fn.toString() } })
+  const key = handleKey(specifier, exportName)
+  let handle = fileHandles.get(key)
+  if (!handle) {
+    handle = new MockHandle(null, specifier, exportName, true)
+    fileHandles.set(key, handle)
   }
-
-  mockReturnValue(value: unknown): this {
-    return this.push({ op: 'set', impl: { type: 'returnValue', value } })
-  }
-
-  mockResolvedValue(value: unknown): this {
-    return this.push({ op: 'set', impl: { type: 'resolvedValue', value } })
-  }
-
-  mockRejectedValue(error: unknown): this {
-    return this.push({ op: 'set', impl: { type: 'rejectedValue', error: serializeError(error) } })
-  }
-
-  mockImplementationOnce(fn: (...args: never[]) => unknown): this {
-    return this.push({
-      op: 'push-once',
-      impl: { type: 'implementation', fnSource: fn.toString() },
-    })
-  }
-
-  mockReturnValueOnce(value: unknown): this {
-    return this.push({ op: 'push-once', impl: { type: 'returnValue', value } })
-  }
-
-  mockResolvedValueOnce(value: unknown): this {
-    return this.push({ op: 'push-once', impl: { type: 'resolvedValue', value } })
-  }
-
-  mockRejectedValueOnce(error: unknown): this {
-    return this.push({ op: 'push-once', impl: { type: 'rejectedValue', error: serializeError(error) } })
-  }
+  return handle
 }
 
-export type DeclareMockFunction = ((specifier: string, exportName: string) => DeclaredMockHandle) & {
-  module(
-    specifier: string,
-    implementations: Record<string, (...args: never[]) => unknown>,
-  ): Record<string, DeclaredMockHandle>
+function bindFileHandles(file: string, controller: MockController): void {
+  for (const handle of handlesByFile.get(file)?.values() ?? []) {
+    handle.bind(controller)
+  }
 }
 
 function createDeclareApi(): DeclareMockFunction {
-  const declare = (specifier: string, exportName: string): DeclaredMockHandle => {
+  const declare = (specifier: string, exportName: string): MockHandle => {
     const file = callerFile()
     if (!file) {
       throw new Error(
         'playwright-stubs: test.mock() could not determine the calling test file; ' +
-          'declare mocks directly in the test file, or use test.use({ mocks }).',
+          'declare mocks at the top of the test file.',
       )
     }
-    let specs = declaredByFile.get(file)
-    if (!specs) {
-      specs = []
-      declaredByFile.set(file, specs)
-    }
-    const spec: DeclaredSpec = { specifier, exportName, ops: [] }
-    specs.push(spec)
-    return new DeclaredMockHandle(spec.ops)
+    return getOrCreateDeclaredHandle(file, specifier, exportName)
   }
 
-  return Object.assign(declare, {
+  const declareAndBind = (specifier: string, exportName: string): MockHandle => {
+    const handle = declare(specifier, exportName)
+    if (activeController) handle.bind(activeController)
+    return handle
+  }
+
+  return Object.assign(declareAndBind, {
     module: (
       specifier: string,
       implementations: Record<string, (...args: never[]) => unknown>,
-    ): Record<string, DeclaredMockHandle> => {
-      const handles: Record<string, DeclaredMockHandle> = {}
+    ): Record<string, MockHandle> => {
+      const handles: Record<string, MockHandle> = {}
       for (const [exportName, fn] of Object.entries(implementations)) {
         if (typeof fn !== 'function') {
           throw new Error(
@@ -383,62 +316,63 @@ function createDeclareApi(): DeclareMockFunction {
               `implementations only; "${exportName}" is ${typeof fn}.`,
           )
         }
-        handles[exportName] = declare(specifier, exportName).mockImplementation(fn)
+        handles[exportName] = declareAndBind(specifier, exportName).mockImplementation(fn)
       }
       return handles
     },
   })
 }
 
-const controllers = new WeakMap<MockFunction, MockController>()
+type StubsFixtures = {
+  _pwStubsController: MockController
+}
 
 /**
- * Extend a Playwright CT `test` object with the `mock` fixture, an
- * auto-flushing `mount`, and the file-level `test.mock()` declaration API.
- * Framework-agnostic: pass the `test` exported by any
- * @playwright/experimental-ct-* package.
+ * Extend a Playwright `test` object with file-level `test.mock()`, an
+ * auto-flushing `mount`, and per-page mock lifecycle management.
+ *
+ * Works with Playwright 1.62+ gallery component testing (`@playwright/test`).
  */
 export function withMocks<TArgs extends object, WArgs extends object>(
   base: TestType<TArgs, WArgs>,
-): TestType<TArgs & MockFixtures, WArgs> & { mock: DeclareMockFunction } {
-  // The fixture shape (page dependency, mount override) is validated at
-  // runtime by Playwright; typing it against the generic base is not worth
-  // the ceremony.
-  const extended = base.extend<MockFixtures>({
-    mocks: [undefined, { option: true }],
-    mock: async (
-      { page, mocks }: { page: Page; mocks: MocksSetup[] | undefined },
-      use: (mock: MockFunction) => Promise<void>,
-      testInfo: { file: string },
-    ) => {
-      const controller = new MockController(page)
-      controllers.set(controller.mock, controller)
-      // Ambient layers, most general first: file-level test.mock()
-      // declarations, then the `mocks` option. The test body layers on top.
-      controller.ambient = true
-      for (const spec of declaredByFile.get(testInfo.file) ?? []) {
-        controller.mock(spec.specifier, spec.exportName)
-        for (const command of spec.ops) {
-          controller.enqueue({
-            specifier: spec.specifier,
-            exportName: spec.exportName,
-            command,
-          })
-        }
-      }
-      for (const setup of mocks ?? []) await setup(controller.mock)
-      controller.ambient = false
-      await use(controller.mock)
-      await controller.dispose()
-    },
+): TestType<TArgs & StubsFixtures, WArgs> & { mock: DeclareMockFunction } {
+  const extended = base.extend<StubsFixtures>({
+    _pwStubsController: [
+      async (
+        { page }: { page: Page },
+        use: (controller: MockController) => Promise<void>,
+        testInfo: { file: string },
+      ) => {
+        const controller = new MockController(page)
+        activeController = controller
+        bindFileHandles(testInfo.file, controller)
+        await use(controller)
+        activeController = null
+        await controller.dispose()
+      },
+      { auto: true },
+    ],
     mount: async (
-      { mount, mock }: { mount: (...args: unknown[]) => unknown; mock: MockFunction },
-      use: (mount: unknown) => Promise<void>,
+      { page, _pwStubsController: controller, baseURL }: {
+        page: Page
+        _pwStubsController: MockController
+        baseURL: string | undefined
+      },
+      use: (mount: (story: string, props?: Record<string, unknown>) => Promise<unknown>) => Promise<void>,
     ) => {
-      const controller = controllers.get(mock)
-      await use(async (...args: unknown[]) => {
-        await controller?.flush()
-        return mount(...args)
+      await use(async (story: string, props?: Record<string, unknown>) => {
+        if (!baseURL) {
+          throw new Error('playwright-stubs: component tests require use.baseURL pointing at the gallery page.')
+        }
+        await page.goto(baseURL)
+        await controller.flush()
+        await page.evaluate(
+          ({ story, props }) => {
+            return (window as unknown as { mount: (p: { story: string; props?: Record<string, unknown> }) => Promise<void> }).mount({ story, props })
+          },
+          { story, props: props ?? {} },
+        )
+        return page.locator('#root')
       })
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
