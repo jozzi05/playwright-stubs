@@ -11,9 +11,9 @@ test.describe.serial('reuseContext lifecycle', () => {
     await expect(component.getByText('701')).toBeVisible()
   })
 
-  test('starts the next test with the original implementation', async ({ mount }) => {
-    const component = await mount('demo/Component/Default')
+  test('starts a different lazy story with a new registry', async ({ mount }) => {
+    const component = await mount('demo/EagerPanel/Default')
 
-    await expect(component.getByText('20')).toBeVisible()
+    await expect(component.getByTestId('eager-value')).toHaveText('20')
   })
 })

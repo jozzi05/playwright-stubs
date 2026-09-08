@@ -159,14 +159,14 @@ export class MockHandle {
 
 export class MockController {
   private pending: AddressedCommand[] = []
-  /** All configuration commands, replayed after each gallery navigation. */
-  private readonly commands: AddressedCommand[] = []
+  /** Every state transition needed to rebuild a fresh gallery document. */
+  private readonly replayCommands: AddressedCommand[] = []
 
   constructor(private readonly page: Page) {}
 
   enqueue(command: AddressedCommand): void {
     this.pending.push(command)
-    this.commands.push(command)
+    this.replayCommands.push(command)
   }
 
   private async send(commands: AddressedCommand[]): Promise<void> {
@@ -191,7 +191,7 @@ export class MockController {
    */
   async replay(): Promise<void> {
     this.pending = []
-    await this.send(this.commands)
+    await this.send(this.replayCommands)
   }
 
   async fetchCalls(specifier: string, exportName: string): Promise<unknown[][]> {
@@ -350,16 +350,19 @@ function createDeclareApi(): DeclareMockFunction {
   })
 }
 
-type StubsFixtures = {
-  _pwStubsController: MockController
-}
-
 type ComponentLocator = Locator & {
   update: (newProps?: Record<string, unknown>) => Promise<void>
   unmount: () => Promise<void>
 }
 
 type CallMount = (params: { story: string; props?: Record<string, unknown> }) => Promise<void>
+
+type Mount = (storyId: string, props?: Record<string, unknown>) => Promise<ComponentLocator>
+
+type StubsFixtures = {
+  _pwStubsController: MockController
+  mount: Mount
+}
 
 /**
  * Compatibility layer for Playwright's component locator shape. It is kept
@@ -420,9 +423,7 @@ export function withMocks<TArgs extends object, WArgs extends object>(
         baseURL: string | undefined
         _pwStubsController: MockController
       },
-      use: (
-        mount: (storyId: string, props?: Record<string, unknown>) => Promise<unknown>,
-      ) => Promise<void>,
+      use: (mount: Mount) => Promise<void>,
     ) => {
       const callMount = async (params: { story: string; props?: Record<string, unknown> }) => {
         await page.evaluate(async (payload) => {

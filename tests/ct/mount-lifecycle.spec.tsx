@@ -12,7 +12,7 @@ test('installs mocks before the lazy story import evaluates', async ({ mount }) 
   await expect(foo).toHaveBeenCalledWith(10)
 })
 
-test('replays mock configuration after a second gallery navigation', async ({ mount }) => {
+test('replays test-body mock configuration after a second gallery navigation', async ({ mount }) => {
   foo.mockReturnValue(654)
 
   const first = await mount('demo/Component/Default')

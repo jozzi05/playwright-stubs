@@ -150,6 +150,8 @@ That flush must occur before the story imports its component dependencies. The c
 
 `test.mock()` determines the owning test file from the Node stack at declaration time. Declare it at the top level of a test file; this is an intentional compatibility constraint.
 
+The fixture uses an async-local controller when Playwright preserves that context and a worker-local fallback when the runner invokes a test callback outside it. The parallel isolation suite covers that fallback with concurrent mock configurations.
+
 ## Mock lifecycle semantics
 
 | Operation | Recorded calls | Implementation |
