@@ -269,20 +269,27 @@ function handleKey(specifier: string, exportName: string): string {
   return `${specifier}\0${exportName}`
 }
 
+function normalizePathForComparison(file: string): string {
+  return file.replace(/\\/g, '/')
+}
+
 function callerFile(): string | null {
   const stack = new Error().stack?.split('\n') ?? []
   for (const line of stack) {
-    const match = line.match(/\(?(?:file:\/\/)?(\/[^():]+?):\d+:\d+\)?/)
+    // Node emits absolute paths in stacks, but their exact spelling varies:
+    // /repo/spec.ts, C:\repo\spec.ts, and file:///C:/repo/spec.ts are all valid.
+    const match = line.match(/\(?((?:file:\/\/\/?)?(?:(?:[A-Za-z]:)?[\\/])[^()]+):\d+:\d+\)?/)
     if (!match) continue
-    let file = match[1]
+    let file: string
     try {
-      file = decodeURIComponent(file)
+      file = match[1].startsWith('file:') ? fileURLToPath(match[1]) : decodeURIComponent(match[1])
     } catch {
-      // keep raw path
+      file = match[1]
     }
     const resolved = path.resolve(file)
-    if (resolved === THIS_FILE) continue
-    if (resolved.includes('/node_modules/') || file.startsWith('node:')) continue
+    const normalized = normalizePathForComparison(resolved)
+    if (normalized === normalizePathForComparison(THIS_FILE)) continue
+    if (normalized.includes('/node_modules/')) continue
     return resolved
   }
   return null
